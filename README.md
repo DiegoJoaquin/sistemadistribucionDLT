@@ -134,6 +134,15 @@ publicaciones de día, y de mes en los bordes. Los dos exportadores además usan
 formatos distintos: Meta entrega `MM/DD/YYYY` y YouTube `DD/MM/YYYY`, así que el
 orden va explícito en cada lector en vez de adivinarse.
 
+**En Zod 4, una clave ausente no es lo mismo que un `undefined`.** Meter
+`z.undefined()` dentro de una unión acepta un undefined explícito pero rechaza
+una clave que no viene, con el mensaje "expected nonoptional, received
+undefined". Y una clave que no viene es exactamente lo que manda el navegador
+cuando el campo no se renderizó o está deshabilitado — el caso de las tres
+métricas de perfil, que viven en una sección colapsada. La optatividad se
+declara con `.optional()`, y `esquemas.test.ts` valida los formularios con
+FormData armado como lo envía el navegador, incluidos los campos que faltan.
+
 **TikTok tiene una categoría: Video.** La especificación original decía "sin
 categorías, solo total", y por eso sus filas quedaban etiquetadas como "sin
 categoría". El equipo lo registra como Video, así que esa es su única categoría

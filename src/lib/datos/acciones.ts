@@ -2,13 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { z } from "zod";
 import {
-  CATEGORIAS,
-  esCategoriaValida,
-  PLATAFORMAS,
-  tieneAlcance,
-} from "@/lib/dominio/plataformas";
+  desdeFormData,
+  esquemaRegistro,
+  esquemaReporte,
+  primerError,
+} from "./esquemas";
 import { cruzar } from "@/lib/importar/cruzar";
 import { leerArchivo } from "@/lib/importar/parsers";
 import { leerRegistroExcel } from "@/lib/importar/registro-excel";
@@ -26,63 +25,6 @@ export interface Resultado {
 /* Registro de publicaciones                                           */
 /* ------------------------------------------------------------------ */
 
-/** Convierte "" en null: §9.4, un campo vacío es "no se midió", no un 0. */
-const entero = z
-  .union([z.string(), z.number(), z.null(), z.undefined()])
-  .transform((v) => {
-    if (v === null || v === undefined) return null;
-    const t = String(v).trim();
-    if (t === "") return null;
-    const n = Number(t.replace(/[.\s]/g, "").replace(",", "."));
-    return Number.isFinite(n) ? Math.round(n) : null;
-  });
-
-const esquemaRegistro = z
-  .object({
-    fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida."),
-    plataforma: z.enum(PLATAFORMAS),
-    categoria: z
-      .union([z.enum(CATEGORIAS), z.literal(""), z.null()])
-      .transform((v) => (v === "" || v === null ? null : v)),
-    // §9.5: cuántas publicaciones representa la fila. Sin esto los promedios
-    // del día quedan mal para todos.
-    publicaciones: z.coerce
-      .number()
-      .int("Las publicaciones deben ser un número entero.")
-      .min(1, "Una fila tiene que representar al menos 1 publicación."),
-    alcance: entero,
-    visualizaciones: entero,
-    interacciones: entero,
-    nuevos_seguidores: entero,
-    visitas_perfil: entero,
-    vistas_seguidores: entero,
-    vistas_no_seguidores: entero,
-    titulo_contenido: z.string().trim().max(300).optional().transform((v) => v || null),
-    enlace: z
-      .string()
-      .trim()
-      .optional()
-      .transform((v) => v || null)
-      .refine((v) => v === null || /^https?:\/\//i.test(v), "El enlace debe empezar con http:// o https://"),
-  })
-  .refine((d) => esCategoriaValida(d.plataforma, d.categoria), {
-    message: "Esa categoría no corresponde a la plataforma elegida.",
-    path: ["categoria"],
-  })
-  // §9.6: YouTube no entrega alcance. Guardarlo sería inventar el dato.
-  .refine((d) => tieneAlcance(d.plataforma) || d.alcance === null, {
-    message: "YouTube no entrega alcance: deja ese campo vacío.",
-    path: ["alcance"],
-  });
-
-function desdeFormData(fd: FormData) {
-  const obj: Record<string, unknown> = {};
-  for (const [k, v] of fd.entries()) {
-    if (typeof v === "string") obj[k] = v;
-  }
-  return obj;
-}
-
 export async function crearRegistro(
   _previo: Resultado | null,
   fd: FormData,
@@ -91,7 +33,7 @@ export async function crearRegistro(
   const parseado = esquemaRegistro.safeParse(desdeFormData(fd));
 
   if (!parseado.success) {
-    return { ok: false, mensaje: parseado.error.issues[0]?.message ?? "Datos inválidos." };
+    return { ok: false, mensaje: primerError(parseado.error) };
   }
 
   const supabase = await supabaseServidor();
@@ -116,7 +58,7 @@ export async function actualizarRegistro(
 
   const parseado = esquemaRegistro.safeParse(desdeFormData(fd));
   if (!parseado.success) {
-    return { ok: false, mensaje: parseado.error.issues[0]?.message ?? "Datos inválidos." };
+    return { ok: false, mensaje: primerError(parseado.error) };
   }
 
   const supabase = await supabaseServidor();
@@ -604,22 +546,13 @@ export async function reclasificar(fd: FormData): Promise<void> {
 /* Reporte diario (§6)                                                 */
 /* ------------------------------------------------------------------ */
 
-const esquemaReporte = z.object({
-  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  plan_publicaciones: z.string().trim().optional().transform((v) => v || null),
-  conversacion_audiencia: z.string().trim().optional().transform((v) => v || null),
-  aprendizajes: z.string().trim().optional().transform((v) => v || null),
-  recomendaciones: z.string().trim().optional().transform((v) => v || null),
-  riesgos: z.string().trim().optional().transform((v) => v || null),
-});
-
 export async function guardarReporte(
   _previo: Resultado | null,
   fd: FormData,
 ): Promise<Resultado> {
   const { usuarioId } = await exigirSesion();
   const parseado = esquemaReporte.safeParse(desdeFormData(fd));
-  if (!parseado.success) return { ok: false, mensaje: "Datos inválidos." };
+  if (!parseado.success) return { ok: false, mensaje: primerError(parseado.error) };
 
   const supabase = await supabaseServidor();
   const { error } = await supabase
