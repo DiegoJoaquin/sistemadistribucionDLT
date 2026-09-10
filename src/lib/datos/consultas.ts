@@ -326,14 +326,12 @@ export async function lineaBasePorId(id: string): Promise<LineaBaseRow | null> {
  * día hubo 17 publicaciones, se ve cuánto hizo cada carga.
  */
 export interface DetalleFila {
-  id: string;
-  categoria: Categoria | null;
-  publicaciones: number;
-  titulo: string | null;
-  enlace: string | null;
-  autor: string | null;
-  creadoEn: string;
-  editado: boolean;
+  /**
+   * La fila completa, no una proyección: el histórico permite editarla en el
+   * lugar y el formulario necesita todos los campos, incluidas las métricas de
+   * perfil, el título y el enlace.
+   */
+  registro: RegistroConAutor;
   /** Promedios por publicación de esta fila sola. */
   porPublicacion: {
     alcance: number | null;
@@ -446,14 +444,7 @@ function detalleDeFila(r: RegistroConAutor, mapa: MapaBase): DetalleFila {
   };
 
   return {
-    id: r.id,
-    categoria: r.categoria,
-    publicaciones: r.publicaciones,
-    titulo: r.titulo_contenido,
-    enlace: r.enlace,
-    autor: r.autor?.nombre ?? null,
-    creadoEn: r.created_at,
-    editado: r.updated_at !== r.created_at,
+    registro: r,
     porPublicacion,
     deltas: {
       alcance: delta(porPublicacion.alcance, b?.alcance_prom),

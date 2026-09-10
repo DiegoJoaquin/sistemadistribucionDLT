@@ -101,7 +101,7 @@ export default async function PaginaHistorico(props: PageProps<"/historico">) {
           <p className="text-xs text-[var(--color-tinta-tenue)]">
             {dias.length} {dias.length === 1 ? "día" : "días"} ·{" "}
             {numero(totalPublicaciones)} publicaciones · {totalFilas} filas ·
-            aprieta una plataforma para ver el desglose de cada carga
+            aprieta una plataforma para ver y editar cada carga
           </p>
 
           <div className="space-y-4">
@@ -135,7 +135,7 @@ export default async function PaginaHistorico(props: PageProps<"/historico">) {
                   </div>
                 </div>
 
-                <TablaHistoricoDia bloques={dia.bloques} />
+                <TablaHistoricoDia bloques={dia.bloques} rango={{ desde, hasta }} />
               </section>
             ))}
           </div>

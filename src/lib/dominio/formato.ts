@@ -173,6 +173,17 @@ export function mesActualISO(): string {
   return hoyISO().slice(0, 7);
 }
 
+/**
+ * ¿Cae la fecha dentro del rango? Los tres son "YYYY-MM-DD".
+ *
+ * La comparación es de texto a propósito: en formato ISO el orden alfabético
+ * coincide con el cronológico, así que no hace falta construir objetos Date ni
+ * arrastrar sus problemas de zona horaria.
+ */
+export function estaEnRango(fecha: string, desde: string, hasta: string): boolean {
+  return fecha >= desde && fecha <= hasta;
+}
+
 export function sumarDias(iso: string, dias: number): string {
   const [a, m, d] = iso.split("-").map(Number);
   const fecha = new Date(Date.UTC(a, m - 1, d));

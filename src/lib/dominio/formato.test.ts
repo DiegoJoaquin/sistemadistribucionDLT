@@ -9,6 +9,7 @@ import {
   porcentaje,
   porcentajeDelta,
   coloresDelta,
+  estaEnRango,
   GUION,
   intensidadDelta,
 } from "./formato";
@@ -57,6 +58,34 @@ describe("las fechas sin hora no se corren de día", () => {
   it("da el día de la semana correcto", () => {
     // El 10 de septiembre de 2026 fue jueves.
     expect(fechaLarga("2026-09-10")).toMatch(/jueves/i);
+  });
+});
+
+/**
+ * Es lo que decide si avisar "guardado, pero quedó fuera del rango que estás
+ * viendo". Sin ese aviso, guardar en otra fecha se veía como si no hubiera
+ * guardado nada.
+ */
+describe("estaEnRango", () => {
+  it("incluye los dos extremos", () => {
+    expect(estaEnRango("2026-09-10", "2026-09-10", "2026-09-10")).toBe(true);
+    expect(estaEnRango("2026-09-01", "2026-09-01", "2026-09-30")).toBe(true);
+    expect(estaEnRango("2026-09-30", "2026-09-01", "2026-09-30")).toBe(true);
+  });
+
+  it("deja fuera lo anterior y lo posterior", () => {
+    expect(estaEnRango("2026-08-31", "2026-09-01", "2026-09-30")).toBe(false);
+    expect(estaEnRango("2026-10-01", "2026-09-01", "2026-09-30")).toBe(false);
+  });
+
+  it("compara cronológicamente aunque sea comparación de texto", () => {
+    // El caso que rompería una comparación alfabética ingenua sin ceros: el 9
+    // de septiembre es anterior al 10, y "09" < "10" también.
+    expect(estaEnRango("2026-09-09", "2026-09-10", "2026-09-20")).toBe(false);
+    expect(estaEnRango("2026-09-15", "2026-09-10", "2026-09-20")).toBe(true);
+    // Cruce de año y de mes.
+    expect(estaEnRango("2025-12-31", "2026-01-01", "2026-01-31")).toBe(false);
+    expect(estaEnRango("2026-02-01", "2026-01-01", "2026-01-31")).toBe(false);
   });
 });
 

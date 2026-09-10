@@ -19,6 +19,29 @@ import type { PublicacionBaseRow } from "@/lib/supabase/tipos-db";
 export interface Resultado {
   ok: boolean;
   mensaje?: string;
+  /**
+   * Fecha del registro que se acaba de guardar.
+   *
+   * La interfaz la necesita porque el formulario permite elegir cualquier
+   * fecha, y si no es la que está filtrada abajo, la fila se guarda bien pero
+   * no aparece. Sin este dato parecía que a veces guardaba y a veces no.
+   */
+  fecha?: string;
+}
+
+/**
+ * Todas las vistas que dependen de los registros.
+ *
+ * Va centralizado porque estaba repetido en cada acción y se había desfasado:
+ * crear o editar un registro revalidaba /registro y /panel pero no /historico
+ * ni /perfil, así que esas dos quedaban mostrando datos viejos.
+ */
+function revalidarVistasDeRegistros(): void {
+  revalidatePath("/registro");
+  revalidatePath("/panel");
+  revalidatePath("/historico");
+  revalidatePath("/perfil");
+  revalidatePath("/reporte");
 }
 
 /* ------------------------------------------------------------------ */
@@ -43,9 +66,8 @@ export async function crearRegistro(
 
   if (error) return { ok: false, mensaje: error.message };
 
-  revalidatePath("/registro");
-  revalidatePath("/panel");
-  return { ok: true, mensaje: "Registro guardado." };
+  revalidarVistasDeRegistros();
+  return { ok: true, mensaje: "Registro guardado.", fecha: parseado.data.fecha };
 }
 
 export async function actualizarRegistro(
@@ -65,9 +87,8 @@ export async function actualizarRegistro(
   const { error } = await supabase.from("registros").update(parseado.data).eq("id", id);
   if (error) return { ok: false, mensaje: error.message };
 
-  revalidatePath("/registro");
-  revalidatePath("/panel");
-  return { ok: true, mensaje: "Cambios guardados." };
+  revalidarVistasDeRegistros();
+  return { ok: true, mensaje: "Cambios guardados.", fecha: parseado.data.fecha };
 }
 
 export async function borrarRegistro(fd: FormData): Promise<void> {
@@ -78,8 +99,7 @@ export async function borrarRegistro(fd: FormData): Promise<void> {
   const supabase = await supabaseServidor();
   await supabase.from("registros").delete().eq("id", id);
 
-  revalidatePath("/registro");
-  revalidatePath("/panel");
+  revalidarVistasDeRegistros();
 }
 
 /* ------------------------------------------------------------------ */

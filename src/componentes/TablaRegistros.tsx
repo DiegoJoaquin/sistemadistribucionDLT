@@ -1,22 +1,13 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
-import { useFormStatus } from "react-dom";
+import { useState } from "react";
 import { Delta } from "@/componentes/Delta";
+import {
+  FormularioEdicionRegistro,
+  type RangoVisible,
+} from "@/componentes/FormularioEdicionRegistro";
 import { Cifra } from "@/componentes/ui";
-import {
-  actualizarRegistro,
-  borrarRegistro,
-  type Resultado,
-} from "@/lib/datos/acciones";
 import { fechaCorta, fechaHoraCorta } from "@/lib/dominio/formato";
-import {
-  categoriasDe,
-  type Categoria,
-  PLATAFORMAS,
-  type Plataforma,
-  tieneAlcance,
-} from "@/lib/dominio/plataformas";
 import type { RegistroConAutor } from "@/lib/supabase/tipos-db";
 
 export interface FilaTabla {
@@ -34,8 +25,21 @@ export interface FilaTabla {
 
 const COLUMNAS = 15;
 
-export function TablaRegistros({ filas }: { filas: FilaTabla[] }) {
+export function TablaRegistros({
+  filas,
+  rango,
+}: {
+  filas: FilaTabla[];
+  /** Rango que está filtrado, para avisar si una edición mueve la fila fuera. */
+  rango: { desde: string; hasta: string };
+}) {
   const [editando, setEditando] = useState<string | null>(null);
+
+  const rangoVisible: RangoVisible = {
+    desde: rango.desde,
+    hasta: rango.hasta,
+    enlaceAFecha: (f) => `/registro?desde=${f}&hasta=${f}`,
+  };
 
   return (
     <div className="tarjeta overflow-hidden">
@@ -63,11 +67,18 @@ export function TablaRegistros({ filas }: { filas: FilaTabla[] }) {
           <tbody>
             {filas.map((f) =>
               editando === f.registro.id ? (
-                <FilaEdicion
+                <tr
                   key={f.registro.id}
-                  fila={f}
-                  onCerrar={() => setEditando(null)}
-                />
+                  className="border-b border-[var(--color-filete)] bg-[var(--color-realce)]/50"
+                >
+                  <td colSpan={COLUMNAS} className="p-4">
+                    <FormularioEdicionRegistro
+                      registro={f.registro}
+                      onCerrar={() => setEditando(null)}
+                      rangoVisible={rangoVisible}
+                    />
+                  </td>
+                </tr>
               ) : (
                 <FilaLectura
                   key={f.registro.id}
@@ -166,229 +177,6 @@ function FilaLectura({ fila, onEditar }: { fila: FilaTabla; onEditar: () => void
             Editar
           </button>
         </div>
-      </td>
-    </tr>
-  );
-}
-
-function BotonGuardar() {
-  const { pending } = useFormStatus();
-  return (
-    <button type="submit" className="boton" disabled={pending}>
-      {pending ? "Guardando…" : "Guardar"}
-    </button>
-  );
-}
-
-function Num({
-  nombre,
-  etiqueta,
-  valor,
-  deshabilitado,
-}: {
-  nombre: string;
-  etiqueta: string;
-  valor: number | null;
-  deshabilitado?: boolean;
-}) {
-  return (
-    <div className="space-y-1">
-      <label className="etiqueta">{etiqueta}</label>
-      <input
-        name={nombre}
-        type="number"
-        min={0}
-        step={1}
-        defaultValue={valor ?? ""}
-        disabled={deshabilitado}
-        placeholder={deshabilitado ? "no aplica" : "—"}
-        className="campo cifra disabled:bg-[var(--color-realce)] disabled:text-[var(--color-tinta-tenue)]"
-      />
-    </div>
-  );
-}
-
-function FilaEdicion({ fila, onCerrar }: { fila: FilaTabla; onCerrar: () => void }) {
-  const r = fila.registro;
-  const [estado, accion] = useActionState<Resultado | null, FormData>(
-    actualizarRegistro,
-    null,
-  );
-  const [plataforma, setPlataforma] = useState<Plataforma>(r.plataforma);
-  const [categoria, setCategoria] = useState<Categoria | "">(r.categoria ?? "");
-
-  useEffect(() => {
-    if (estado?.ok) onCerrar();
-  }, [estado, onCerrar]);
-
-  const categorias = categoriasDe(plataforma);
-  const conAlcance = tieneAlcance(plataforma);
-
-  return (
-    <tr className="border-b border-[var(--color-filete)] bg-[var(--color-realce)]/50">
-      <td colSpan={COLUMNAS} className="p-4">
-        <form action={accion} className="space-y-3">
-          <input type="hidden" name="id" value={r.id} />
-
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="space-y-1">
-              <label className="etiqueta">Fecha</label>
-              <input
-                name="fecha"
-                type="date"
-                required
-                defaultValue={r.fecha}
-                className="campo"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="etiqueta">Plataforma</label>
-              <select
-                name="plataforma"
-                className="campo"
-                value={plataforma}
-                onChange={(e) => {
-                  const nueva = e.target.value as Plataforma;
-                  setPlataforma(nueva);
-                  // Con una sola categoría queda puesta sola (TikTok es Video).
-                  const suyas = categoriasDe(nueva);
-                  setCategoria(suyas.length === 1 ? suyas[0] : "");
-                }}
-              >
-                {PLATAFORMAS.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="etiqueta">Categoría</label>
-              <select
-                name="categoria"
-                className="campo disabled:bg-[var(--color-realce)]"
-                disabled={categorias.length === 0}
-                value={categoria}
-                onChange={(e) => setCategoria(e.target.value as Categoria | "")}
-              >
-                {categorias.length === 0 ? (
-                  <option value="">sin categorías</option>
-                ) : (
-                  <>
-                    {categorias.length > 1 && <option value="">— elegir —</option>}
-                    {categorias.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </>
-                )}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="etiqueta">Publicaciones</label>
-              <input
-                name="publicaciones"
-                type="number"
-                min={1}
-                step={1}
-                required
-                defaultValue={r.publicaciones}
-                className="campo cifra"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Num
-              nombre="alcance"
-              etiqueta="Alcance"
-              valor={conAlcance ? r.alcance : null}
-              deshabilitado={!conAlcance}
-            />
-            <Num
-              nombre="visualizaciones"
-              etiqueta="Visualizaciones"
-              valor={r.visualizaciones}
-            />
-            <Num nombre="interacciones" etiqueta="Interacciones" valor={r.interacciones} />
-            <Num
-              nombre="nuevos_seguidores"
-              etiqueta="Nuevos seguidores"
-              valor={r.nuevos_seguidores}
-            />
-          </div>
-
-          <div className="rounded-md border border-dashed border-[var(--color-filete-fuerte)] bg-white/70 p-3">
-            <p className="mb-2 text-xs font-medium text-[var(--color-tinta-suave)]">
-              Métricas de perfil · se ingresan a mano
-            </p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <Num
-                nombre="visitas_perfil"
-                etiqueta="Visitas al perfil"
-                valor={r.visitas_perfil}
-              />
-              <Num
-                nombre="vistas_seguidores"
-                etiqueta="Vistas de seguidores"
-                valor={r.vistas_seguidores}
-              />
-              <Num
-                nombre="vistas_no_seguidores"
-                etiqueta="Vistas de no seguidores"
-                valor={r.vistas_no_seguidores}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <label className="etiqueta">Título del contenido</label>
-              <input
-                name="titulo_contenido"
-                type="text"
-                maxLength={300}
-                defaultValue={r.titulo_contenido ?? ""}
-                className="campo"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="etiqueta">Enlace</label>
-              <input
-                name="enlace"
-                type="url"
-                defaultValue={r.enlace ?? ""}
-                className="campo"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <BotonGuardar />
-            <button type="button" onClick={onCerrar} className="boton-suave">
-              Cancelar
-            </button>
-            <span className="flex-1" />
-            <span className="text-xs text-[var(--color-tinta-tenue)]">
-              Cargado por {r.autor?.nombre ?? "—"} el {fechaHoraCorta(r.created_at)}
-            </span>
-            <button
-              type="submit"
-              formAction={borrarRegistro}
-              formNoValidate
-              className="text-[13px] text-red-700 underline-offset-2 hover:underline"
-            >
-              Borrar
-            </button>
-          </div>
-
-          {estado?.mensaje && !estado.ok && (
-            <p role="alert" className="text-sm text-red-700">
-              {estado.mensaje}
-            </p>
-          )}
-        </form>
       </td>
     </tr>
   );

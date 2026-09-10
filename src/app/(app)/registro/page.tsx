@@ -106,7 +106,7 @@ export default async function PaginaRegistro(props: PageProps<"/registro">) {
         </Link>
       </div>
 
-      <FormularioRegistro hoy={hoy} />
+      <FormularioRegistro hoy={hoy} rango={{ desde, hasta }} />
 
       {!base && (
         <Nota>
@@ -209,7 +209,7 @@ export default async function PaginaRegistro(props: PageProps<"/registro">) {
           <p className="text-xs text-[var(--color-tinta-tenue)]">
             {filas.length} {filas.length === 1 ? "fila" : "filas"} · {rango}
           </p>
-          <TablaRegistros filas={filas} />
+          <TablaRegistros filas={filas} rango={{ desde, hasta }} />
         </>
       )}
     </div>

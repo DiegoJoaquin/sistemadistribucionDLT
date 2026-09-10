@@ -3,22 +3,42 @@
 import Link from "next/link";
 import { Fragment, useState } from "react";
 import { Delta } from "@/componentes/Delta";
+import {
+  FormularioEdicionRegistro,
+  type RangoVisible,
+} from "@/componentes/FormularioEdicionRegistro";
 import { Cifra, Pct } from "@/componentes/ui";
-import type { BloqueDia } from "@/lib/datos/consultas";
+import type { BloqueDia, DetalleFila } from "@/lib/datos/consultas";
 import { fechaHoraCorta } from "@/lib/dominio/formato";
 import { tieneAlcance } from "@/lib/dominio/plataformas";
 
 const COLUMNAS = 12;
+const COLUMNAS_DETALLE = 13;
 
 /**
  * Un día del histórico: una fila por plataforma con su total, y al apretarla se
- * abre el desglose de cada carga con sus propios deltas.
+ * abre el desglose de cada carga con sus propios deltas. Cada carga se puede
+ * editar ahí mismo, con el mismo formulario del registro diario.
  *
  * El desglose viene calculado del servidor, así que abrir y cerrar no dispara
  * ninguna petición.
  */
-export function TablaHistoricoDia({ bloques }: { bloques: BloqueDia[] }) {
+export function TablaHistoricoDia({
+  bloques,
+  rango,
+}: {
+  bloques: BloqueDia[];
+  /** Rango filtrado, para avisar si una edición mueve la fila fuera de vista. */
+  rango: { desde: string; hasta: string };
+}) {
   const [abiertas, setAbiertas] = useState<Set<string>>(new Set());
+  const [editando, setEditando] = useState<string | null>(null);
+
+  const rangoVisible: RangoVisible = {
+    desde: rango.desde,
+    hasta: rango.hasta,
+    enlaceAFecha: (f) => `/historico?desde=${f}&hasta=${f}`,
+  };
 
   const alternar = (plataforma: string) =>
     setAbiertas((previas) => {
@@ -143,91 +163,34 @@ export function TablaHistoricoDia({ bloques }: { bloques: BloqueDia[] }) {
                               <th className="th">Δ Interacc.</th>
                               <th className="th">Δ Seguidores</th>
                               <th className="th">Contenido</th>
+                              <th className="th sr-only">Acciones</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {detalle.map((d) => (
-                              <tr
-                                key={d.id}
-                                className="border-b border-[var(--color-filete)] last:border-0"
-                              >
-                                <td className="td">
-                                  {d.categoria ?? (
-                                    <span className="text-[var(--color-tinta-tenue)]">
-                                      sin categoría
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="td text-right cifra">{d.publicaciones}</td>
-                                <td className="td text-right">
-                                  {conAlcance ? (
-                                    <Cifra valor={d.porPublicacion.alcance} />
-                                  ) : (
-                                    <span className="text-[var(--color-tinta-tenue)]">n/a</span>
-                                  )}
-                                </td>
-                                <td className="td text-right">
-                                  <Cifra valor={d.porPublicacion.visualizaciones} />
-                                </td>
-                                <td className="td text-right">
-                                  <Cifra valor={d.porPublicacion.interacciones} />
-                                </td>
-                                <td className="td text-right">
-                                  <Pct valor={d.porPublicacion.engagement} />
-                                </td>
-                                <td className="td text-right">
-                                  <Cifra valor={d.porPublicacion.nuevos_seguidores} fino />
-                                </td>
-                                <td className="td">
-                                  <Delta
-                                    valor={d.deltas.alcance}
-                                    titulo={
-                                      d.sinBase
-                                        ? `No hay línea base para ${linea.plataforma} · ${d.categoria ?? "sin categoría"}`
-                                        : undefined
-                                    }
-                                  />
-                                </td>
-                                <td className="td">
-                                  <Delta valor={d.deltas.visualizaciones} />
-                                </td>
-                                <td className="td">
-                                  <Delta valor={d.deltas.interacciones} />
-                                </td>
-                                <td className="td">
-                                  <Delta valor={d.deltas.nuevos_seguidores} />
-                                </td>
-                                <td className="td">
-                                  <div className="flex max-w-[18rem] flex-col leading-tight">
-                                    {d.titulo ? (
-                                      d.enlace ? (
-                                        <Link
-                                          href={d.enlace}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="truncate text-[13px] underline-offset-2 hover:underline"
-                                          title={d.titulo}
-                                        >
-                                          {d.titulo}
-                                        </Link>
-                                      ) : (
-                                        <span className="truncate text-[13px]" title={d.titulo}>
-                                          {d.titulo}
-                                        </span>
-                                      )
-                                    ) : (
-                                      <span className="text-[13px] text-[var(--color-tinta-tenue)]">
-                                        sin título
-                                      </span>
-                                    )}
-                                    <span className="text-[11px] text-[var(--color-tinta-tenue)]">
-                                      {d.autor ?? "—"} · {fechaHoraCorta(d.creadoEn)}
-                                      {d.editado && " · editado"}
-                                    </span>
-                                  </div>
-                                </td>
-                              </tr>
-                            ))}
+                            {detalle.map((d) =>
+                              editando === d.registro.id ? (
+                                <tr
+                                  key={d.registro.id}
+                                  className="border-b border-[var(--color-filete)] bg-white"
+                                >
+                                  <td colSpan={COLUMNAS_DETALLE} className="p-3">
+                                    <FormularioEdicionRegistro
+                                      registro={d.registro}
+                                      onCerrar={() => setEditando(null)}
+                                      rangoVisible={rangoVisible}
+                                    />
+                                  </td>
+                                </tr>
+                              ) : (
+                                <FilaDetalle
+                                  key={d.registro.id}
+                                  d={d}
+                                  conAlcance={conAlcance}
+                                  plataforma={linea.plataforma}
+                                  onEditar={() => setEditando(d.registro.id)}
+                                />
+                              ),
+                            )}
                           </tbody>
                         </table>
                       </div>
@@ -240,5 +203,106 @@ export function TablaHistoricoDia({ bloques }: { bloques: BloqueDia[] }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function FilaDetalle({
+  d,
+  conAlcance,
+  plataforma,
+  onEditar,
+}: {
+  d: DetalleFila;
+  conAlcance: boolean;
+  plataforma: string;
+  onEditar: () => void;
+}) {
+  const r = d.registro;
+
+  return (
+    <tr className="border-b border-[var(--color-filete)] last:border-0">
+      <td className="td">
+        {r.categoria ?? (
+          <span className="text-[var(--color-tinta-tenue)]">sin categoría</span>
+        )}
+      </td>
+      <td className="td text-right cifra">{r.publicaciones}</td>
+      <td className="td text-right">
+        {conAlcance ? (
+          <Cifra valor={d.porPublicacion.alcance} />
+        ) : (
+          <span className="text-[var(--color-tinta-tenue)]">n/a</span>
+        )}
+      </td>
+      <td className="td text-right">
+        <Cifra valor={d.porPublicacion.visualizaciones} />
+      </td>
+      <td className="td text-right">
+        <Cifra valor={d.porPublicacion.interacciones} />
+      </td>
+      <td className="td text-right">
+        <Pct valor={d.porPublicacion.engagement} />
+      </td>
+      <td className="td text-right">
+        <Cifra valor={d.porPublicacion.nuevos_seguidores} fino />
+      </td>
+      <td className="td">
+        <Delta
+          valor={d.deltas.alcance}
+          titulo={
+            d.sinBase
+              ? `No hay línea base para ${plataforma} · ${r.categoria ?? "sin categoría"}`
+              : undefined
+          }
+        />
+      </td>
+      <td className="td">
+        <Delta valor={d.deltas.visualizaciones} />
+      </td>
+      <td className="td">
+        <Delta valor={d.deltas.interacciones} />
+      </td>
+      <td className="td">
+        <Delta valor={d.deltas.nuevos_seguidores} />
+      </td>
+      <td className="td">
+        <div className="flex max-w-[18rem] flex-col leading-tight">
+          {r.titulo_contenido ? (
+            r.enlace ? (
+              <Link
+                href={r.enlace}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="truncate text-[13px] underline-offset-2 hover:underline"
+                title={r.titulo_contenido}
+              >
+                {r.titulo_contenido}
+              </Link>
+            ) : (
+              <span className="truncate text-[13px]" title={r.titulo_contenido}>
+                {r.titulo_contenido}
+              </span>
+            )
+          ) : (
+            <span className="text-[13px] text-[var(--color-tinta-tenue)]">
+              sin título
+            </span>
+          )}
+          <span className="text-[11px] text-[var(--color-tinta-tenue)]">
+            {r.autor?.nombre ?? "—"} · {fechaHoraCorta(r.created_at)}
+            {r.updated_at !== r.created_at && " · editado"}
+          </span>
+        </div>
+      </td>
+      <td className="td">
+        <button
+          type="button"
+          onClick={onEditar}
+          className="text-[13px] text-[var(--color-tinta-suave)] underline-offset-2 hover:text-[var(--color-tinta)] hover:underline"
+        >
+          Editar
+        </button>
+      </td>
+    </tr>
   );
 }

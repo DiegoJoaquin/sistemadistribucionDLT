@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useEffect, useId, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { crearRegistro, type Resultado } from "@/lib/datos/acciones";
+import { estaEnRango, fechaCorta } from "@/lib/dominio/formato";
 import {
   categoriasDe,
   PLATAFORMAS,
@@ -54,7 +56,14 @@ function CampoNumero({
   );
 }
 
-export function FormularioRegistro({ hoy }: { hoy: string }) {
+export function FormularioRegistro({
+  hoy,
+  rango,
+}: {
+  hoy: string;
+  /** Rango que está filtrado en la tabla de abajo. */
+  rango: { desde: string; hasta: string };
+}) {
   const [estado, accion] = useActionState<Resultado | null, FormData>(
     crearRegistro,
     null,
@@ -65,6 +74,15 @@ export function FormularioRegistro({ hoy }: { hoy: string }) {
 
   const categorias = categoriasDe(plataforma);
   const conAlcance = tieneAlcance(plataforma);
+
+  /*
+   * Se guardó, pero en una fecha que la tabla de abajo no está mostrando. Sin
+   * avisar, esto se ve como si el registro no se hubiera guardado.
+   */
+  const fueraDelRango =
+    estado?.ok === true &&
+    estado.fecha !== undefined &&
+    !estaEnRango(estado.fecha, rango.desde, rango.hasta);
 
   // Al guardar bien, se limpian las métricas pero se mantienen fecha y
   // plataforma: casi siempre se cargan varias filas seguidas de lo mismo.
@@ -254,7 +272,7 @@ export function FormularioRegistro({ hoy }: { hoy: string }) {
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <Guardar />
-        {estado?.mensaje && (
+        {estado?.mensaje && !fueraDelRango && (
           <p
             role="status"
             className={`text-sm ${estado.ok ? "text-emerald-700" : "text-red-700"}`}
@@ -263,6 +281,30 @@ export function FormularioRegistro({ hoy }: { hoy: string }) {
           </p>
         )}
       </div>
+
+      {fueraDelRango && estado?.fecha && (
+        <div
+          role="status"
+          className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900"
+        >
+          <p className="font-medium">
+            Registro guardado en el {fechaCorta(estado.fecha)}.
+          </p>
+          <p className="mt-1">
+            La tabla de abajo está filtrada
+            {rango.desde === rango.hasta
+              ? ` al ${fechaCorta(rango.desde)}`
+              : ` del ${fechaCorta(rango.desde)} al ${fechaCorta(rango.hasta)}`}
+            , así que la fila no aparece ahí.
+          </p>
+          <Link
+            href={`/registro?desde=${estado.fecha}&hasta=${estado.fecha}`}
+            className="boton-suave mt-2.5"
+          >
+            Ver el {fechaCorta(estado.fecha)}
+          </Link>
+        </div>
+      )}
     </form>
   );
 }
