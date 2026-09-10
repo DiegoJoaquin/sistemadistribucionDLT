@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LogoDLT } from "@/componentes/LogoDLT";
 import { Navegacion } from "@/componentes/Navegacion";
 import { cerrarSesion } from "@/lib/datos/acciones";
 import { mesLargo } from "@/lib/dominio/formato";
@@ -13,10 +14,18 @@ export default async function LayoutApp({ children }: LayoutProps<"/">) {
     <div className="flex min-h-full flex-col">
       <header className="border-b border-[var(--color-filete)] bg-[var(--color-superficie)]">
         <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-3 px-4 pt-3 sm:px-6">
-          <div className="flex items-baseline gap-3">
-            <Link href="/registro" className="text-sm font-semibold tracking-tight">
-              KPIs diarios
+          <div className="flex items-center gap-2.5">
+            <Link
+              href="/registro"
+              className="flex items-center gap-2.5 transition-opacity hover:opacity-70"
+              aria-label="Ir al registro diario"
+            >
+              <LogoDLT ancho={26} prioritario />
+              <span className="text-sm font-semibold tracking-tight">KPIs diarios</span>
             </Link>
+            <span aria-hidden className="text-[var(--color-filete-fuerte)]">
+              |
+            </span>
             <span className="text-xs text-[var(--color-tinta-tenue)]">
               DLT Sports · Distribución
             </span>

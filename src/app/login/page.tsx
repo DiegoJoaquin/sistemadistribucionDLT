@@ -1,4 +1,5 @@
 import { FormularioLogin } from "@/componentes/FormularioLogin";
+import { LogoDLT } from "@/componentes/LogoDLT";
 
 export const metadata = { title: "Entrar · KPIs DLT" };
 
@@ -9,6 +10,7 @@ export default async function PaginaLogin(props: PageProps<"/login">) {
     <main className="flex min-h-full flex-1 items-center justify-center px-4 py-12">
       <div className="w-full max-w-sm">
         <div className="mb-7">
+          <LogoDLT ancho={62} prioritario className="mb-5" />
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-tinta-tenue)]">
             DLT Sports · Distribución
           </p>

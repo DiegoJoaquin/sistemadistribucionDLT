@@ -19,6 +19,7 @@ import {
   htmlCorreo,
   textoPlano,
 } from "@/lib/reporte/generar";
+import { urlPublica } from "@/lib/supabase/entorno";
 
 export const metadata = { title: "Reporte diario · KPIs DLT" };
 
@@ -65,7 +66,7 @@ export default async function PaginaReporte(props: PageProps<"/reporte">) {
   });
 
   const reporte = construirReporte(panel, filas, textos);
-  const html = htmlCorreo(reporte);
+  const html = htmlCorreo(reporte, { urlBase: urlPublica() });
   const texto = textoPlano(reporte);
 
   return (

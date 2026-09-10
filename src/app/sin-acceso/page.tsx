@@ -1,3 +1,4 @@
+import { LogoDLT } from "@/componentes/LogoDLT";
 import { cerrarSesion } from "@/lib/datos/acciones";
 import { supabaseServidor } from "@/lib/supabase/servidor";
 
@@ -18,6 +19,7 @@ export default async function PaginaSinAcceso() {
   return (
     <main className="flex min-h-full flex-1 items-center justify-center px-4 py-12">
       <div className="w-full max-w-md">
+        <LogoDLT ancho={52} className="mb-5" />
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-tinta-tenue)]">
           DLT Sports · Distribución
         </p>

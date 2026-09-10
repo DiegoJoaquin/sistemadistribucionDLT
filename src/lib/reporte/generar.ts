@@ -251,7 +251,15 @@ const PREGUNTAS: [keyof TextosReporte, string][] = [
   ["riesgos", "¿Existe algún riesgo o decisión que requiera gerencia?"],
 ];
 
-export function htmlCorreo(r: Reporte): string {
+export interface OpcionesCorreo {
+  /**
+   * URL pública de la aplicación. Sin ella el correo va sin logo: un cliente
+   * de correo no resuelve rutas relativas.
+   */
+  urlBase?: string | null;
+}
+
+export function htmlCorreo(r: Reporte, opciones: OpcionesCorreo = {}): string {
   const secciones = PREGUNTAS.filter(([k]) => r.textos[k])
     .map(
       ([k, pregunta]) => `<div style="margin:0 0 14px">
@@ -278,6 +286,11 @@ export function htmlCorreo(r: Reporte): string {
 <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;max-width:660px;text-align:left;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
 <tr><td>
 
+  ${
+    opciones.urlBase
+      ? `<img src="${opciones.urlBase}/logo-dlt.png" width="46" height="47" alt="DLT Sports" style="display:block;border:0;margin:0 0 14px">`
+      : ""
+  }
   <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#8a8a82">DLT Sports · Distribución</p>
   <h1 style="margin:6px 0 2px;font-size:22px;font-weight:700;color:#1a1a18">Reporte diario de KPIs</h1>
   <p style="margin:0 0 4px;font-size:15px;color:#33332f;text-transform:capitalize">${esc(
