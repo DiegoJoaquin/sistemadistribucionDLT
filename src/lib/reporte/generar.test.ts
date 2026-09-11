@@ -1,6 +1,9 @@
 /**
- * El reporte diario no tenía tests, y así fue como se quedó sin la sección de
- * métricas de perfil sin que nada avisara.
+ * Tests del reporte diario.
+ *
+ * Las métricas de perfil van dentro del bloque de KPIs de cada plataforma, con
+ * el mismo formato de línea que Alcance, Visualizaciones e Interacciones. No en
+ * una tabla aparte.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -47,7 +50,8 @@ function panel(filas: FilaCalculo[]): PanelDiario {
   };
 }
 
-const DIA_CON_PERFIL: FilaCalculo[] = [
+const DIA: FilaCalculo[] = [
+  // Instagram DLT con las tres métricas de perfil cargadas.
   fila({
     plataforma: "Instagram DLT",
     categoria: "Reel",
@@ -57,6 +61,7 @@ const DIA_CON_PERFIL: FilaCalculo[] = [
     vistas_seguidores: 20_000,
     vistas_no_seguidores: 60_000,
   }),
+  // Instagram DBF con vistas, pero sin visitas al perfil: igual que en el Excel.
   fila({
     plataforma: "Instagram DBF",
     categoria: "Reel",
@@ -69,98 +74,88 @@ const DIA_CON_PERFIL: FilaCalculo[] = [
   fila({ plataforma: "TikTok", categoria: "Video", publicaciones: 3, alcance: 60_000 }),
 ];
 
-describe("métricas de perfil en el modelo del reporte", () => {
-  const r = construirReporte(panel(DIA_CON_PERFIL), [], null);
+/** Recorta el bloque de una plataforma dentro del correo. */
+function bloque(html: string, desde: string, hasta?: string): string {
+  const i = html.indexOf(desde);
+  expect(i, `no está el bloque de ${desde}`).toBeGreaterThan(-1);
+  const j = hasta ? html.indexOf(hasta, i) : html.indexOf("</div>", i);
+  return html.slice(i, j);
+}
 
-  it("incluye las plataformas con métricas de perfil cargadas", () => {
+describe("métricas de perfil en el modelo del reporte", () => {
+  const r = construirReporte(panel(DIA), [], null);
+
+  it("trae el promedio por publicación de cada plataforma con datos", () => {
     const dlt = r.perfil.find((l) => l.plataforma === "Instagram DLT")!;
-    expect(dlt.publicaciones).toBe(2);
     expect(dlt.visitas_perfil).toBe(200);
     expect(dlt.vistas_seguidores).toBe(10_000);
     expect(dlt.vistas_no_seguidores).toBe(30_000);
     expect(dlt.pct_no_seguidores).toBeCloseTo(0.75, 10);
   });
 
-  it("deja fuera las plataformas donde no se cargaron, en vez de mostrar guiones", () => {
-    expect(r.perfil.map((l) => l.plataforma)).not.toContain("TikTok");
-    expect(r.perfil.map((l) => l.plataforma)).not.toContain("YouTube");
-  });
-
-  it("agrega el TOTAL cuando hay más de una plataforma", () => {
-    expect(r.perfil.at(-1)?.plataforma).toBe("TOTAL");
-  });
-
-  it("el TOTAL suma solo las publicaciones de las filas que se muestran", () => {
-    // Instagram DLT 2 + Instagram DBF 1. Las 3 de TikTok no tienen métricas de
-    // perfil, no aparecen en la tabla, y no pueden inflar el total: en el correo
-    // se vería como una suma mal hecha.
-    const total = r.perfil.find((l) => l.plataforma === "TOTAL")!;
-    const filasVisibles = r.perfil.filter((l) => l.plataforma !== "TOTAL");
-    expect(total.publicaciones).toBe(3);
-    expect(total.publicaciones).toBe(
-      filasVisibles.reduce((a, l) => a + l.publicaciones, 0),
-    );
-  });
-
-  it("los promedios del TOTAL no cambian al corregir el conteo", () => {
-    const total = r.perfil.find((l) => l.plataforma === "TOTAL")!;
-    // (20.000 + 5.000) / 3 publicaciones con esa métrica
-    expect(total.vistas_seguidores).toBeCloseTo(25_000 / 3, 6);
-    // (60.000 + 5.000) / 3
-    expect(total.vistas_no_seguidores).toBeCloseTo(65_000 / 3, 6);
-  });
-
-  it("no repite el TOTAL cuando hay una sola plataforma", () => {
-    const solo = construirReporte(panel([DIA_CON_PERFIL[0]]), [], null);
-    expect(solo.perfil.map((l) => l.plataforma)).toEqual(["Instagram DLT"]);
-  });
-
-  it("queda vacío si ese día nadie cargó métricas de perfil", () => {
-    const sin = construirReporte(panel([DIA_CON_PERFIL[2]]), [], null);
-    expect(sin.perfil).toEqual([]);
+  it("no incluye plataformas sin métricas de perfil ni una fila TOTAL", () => {
+    expect(r.perfil.map((l) => l.plataforma)).toEqual(["Instagram DLT", "Instagram DBF"]);
   });
 });
 
 describe("métricas de perfil en el correo", () => {
-  const html = htmlCorreo(construirReporte(panel(DIA_CON_PERFIL), [], null));
+  const html = htmlCorreo(construirReporte(panel(DIA), [], null));
+  const dlt = bloque(html, "Instagram DLT", "Instagram DBF");
+  const dbf = bloque(html, "Instagram DBF", "TikTok");
+  const tiktok = bloque(html, "TikTok");
 
-  it("trae la sección con sus columnas", () => {
-    expect(html).toContain("Métricas de perfil del día");
-    expect(html).toContain("Vistas seguidores");
-    expect(html).toContain("Vistas no seguidores");
-    expect(html).toContain("% no seguidores");
+  it("no es una tabla aparte", () => {
+    expect(html).not.toContain("Métricas de perfil del día");
+    expect(html).not.toMatch(/<th[^>]*>Vistas seguidores/);
   });
 
-  it("muestra los promedios en formato chileno", () => {
-    expect(html).toContain("10.000"); // vistas de seguidores por publicación
-    expect(html).toContain("30.000"); // vistas de no seguidores
-    expect(html).toContain("75,0%"); // % de no seguidores de Instagram DLT
-    expect(html).toContain("50,0%"); // % de no seguidores de Instagram DBF
+  it("van dentro del bloque de la plataforma, después de los KPIs", () => {
+    expect(dlt).toContain("Visitas al perfil:");
+    expect(dlt.indexOf("Visitas al perfil:")).toBeGreaterThan(
+      dlt.indexOf("Seguidores nuevos:"),
+    );
   });
 
-  it("explica por qué no hay variación (§9.7)", () => {
-    expect(html).toMatch(/todavía no tienen línea base/);
+  it("usan el mismo formato de línea que los KPIs", () => {
+    expect(dlt).toMatch(/Visitas al perfil:<\/span>\s*<strong[^>]*>200<\/strong>/);
+    expect(dlt).toMatch(/Vistas de seguidores:<\/span>\s*<strong[^>]*>10\.000<\/strong>/);
+    expect(dlt).toMatch(/Vistas de no seguidores:<\/span>\s*<strong[^>]*>30\.000<\/strong>/);
+    expect(dlt).toMatch(/% de no seguidores:<\/span>\s*<strong[^>]*>75,0%<\/strong>/);
   });
 
-  it("va entre los KPIs y la lectura del día", () => {
-    const kpis = html.indexOf("KPIs del día por plataforma");
-    const perfil = html.indexOf("Métricas de perfil del día");
-    expect(kpis).toBeGreaterThan(-1);
-    expect(perfil).toBeGreaterThan(kpis);
+  it("dicen que no tienen línea base, sin inventar una variación (§9.7)", () => {
+    expect(dlt).toContain("(sin línea base)");
+    expect(dlt).not.toMatch(/que promedio diario/);
   });
 
-  it("dice explícitamente cuando no hay datos de perfil (§8)", () => {
-    const sin = htmlCorreo(construirReporte(panel([DIA_CON_PERFIL[2]]), [], null));
-    expect(sin).toContain("No se cargaron métricas de perfil para este día.");
+  it("muestran guion cuando falta la métrica, no cero (§9.4)", () => {
+    expect(dbf).toMatch(/Visitas al perfil:<\/span>\s*<strong[^>]*>—<\/strong>/);
+    expect(dbf).toMatch(/Vistas de seguidores:<\/span>\s*<strong[^>]*>5\.000<\/strong>/);
+  });
+
+  it("avisan cuando en una plataforma no se cargaron (§8)", () => {
+    expect(tiktok).toContain("Métricas de perfil: no se cargaron");
+    expect(tiktok).not.toContain("Visitas al perfil:");
   });
 });
 
 describe("métricas de perfil en el texto plano", () => {
-  it("trae la sección con cada plataforma", () => {
-    const t = textoPlano(construirReporte(panel(DIA_CON_PERFIL), [], null));
-    expect(t).toContain("MÉTRICAS DE PERFIL DEL DÍA");
-    expect(t).toContain("Instagram DLT (2 publicaciones)");
-    expect(t).toContain("Vistas de seguidores: 10.000");
-    expect(t).toContain("% de no seguidores: 75,0%");
+  const t = textoPlano(construirReporte(panel(DIA), [], null));
+
+  it("van dentro del bloque de cada plataforma, con el mismo formato", () => {
+    expect(t).not.toContain("MÉTRICAS DE PERFIL DEL DÍA");
+    expect(t).toContain("    Visitas al perfil: 200 (sin línea base)");
+    expect(t).toContain("    Vistas de seguidores: 10.000 (sin línea base)");
+    expect(t).toContain("    % de no seguidores: 75,0% (sin línea base)");
+  });
+
+  it("muestra guion sin nota cuando falta el dato", () => {
+    const lineas = t.split("\n");
+    expect(lineas).toContain("    Visitas al perfil: —");
+  });
+
+  it("avisa cuando en una plataforma no se cargaron", () => {
+    const i = t.indexOf("  TikTok");
+    expect(t.slice(i)).toContain("    Métricas de perfil: no se cargaron");
   });
 });

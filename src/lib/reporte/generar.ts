@@ -56,8 +56,9 @@ export interface Reporte {
   bloques: LineaPanel[];
   /**
    * §4.3 — visitas al perfil, vistas de seguidores y de no seguidores, como
-   * promedio por publicación del día. Solo las plataformas que tienen alguna
-   * de estas métricas cargada, más el TOTAL cuando hay más de una.
+   * promedio por publicación del día. Una línea por plataforma que tenga alguna
+   * de estas métricas cargada; en el correo van dentro del bloque de KPIs de
+   * esa plataforma.
    */
   perfil: LineaPerfil[];
   textos: TextosReporte;
@@ -135,76 +136,13 @@ export function construirReporte(
 /* Métricas de perfil (§4.3)                                           */
 /* ------------------------------------------------------------------ */
 
-/**
- * Filas de perfil que van al reporte.
- *
- * Se omiten las plataformas donde nadie cargó estas métricas: son manuales, y
- * una fila de guiones en un correo a gerencia no informa nada. El TOTAL solo
- * se agrega si hay más de una plataforma, porque con una sola repetiría la
- * misma fila.
- */
+/** Plataformas del día que tienen alguna métrica de perfil cargada. */
 function perfilDelReporte(panel: PanelDiario): LineaPerfil[] {
-  const conDatos = panel.perfil.filter((l) => l.plataforma !== "TOTAL" && !l.sinDatos);
-  if (conDatos.length === 0) return [];
-  const total = panel.perfil.find((l) => l.plataforma === "TOTAL");
-  if (conDatos.length === 1 || !total) return conDatos;
-
-  /*
-   * El TOTAL del panel cuenta las publicaciones de todas las plataformas del
-   * día, incluidas las que no tienen métricas de perfil y por eso no aparecen
-   * en esta tabla. En el correo eso se leía como un error de suma (9 + 2 = 14).
-   * Los promedios no cambian: ya ignoran las filas sin estas métricas.
-   */
-  return [
-    ...conDatos,
-    { ...total, publicaciones: conDatos.reduce((a, l) => a + l.publicaciones, 0) },
-  ];
+  return panel.perfil.filter((l) => l.plataforma !== "TOTAL" && !l.sinDatos);
 }
 
-/** Tabla de métricas de perfil para el correo. */
-function tablaPerfil(lineas: LineaPerfil[]): string {
-  const titulo = H2("Métricas de perfil del día");
-
-  if (lineas.length === 0) {
-    return `${titulo}<p style="margin:0;font-size:14px;color:#8a8a82">No se cargaron métricas de perfil para este día.</p>`;
-  }
-
-  const th = (texto: string, alinear: "left" | "right" = "right") =>
-    `<th style="padding:8px 8px;text-align:${alinear};font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6e6e68;white-space:nowrap">${texto}</th>`;
-
-  const filas = lineas
-    .map((l) => {
-      const esTotal = l.plataforma === "TOTAL";
-      const fondo = esTotal ? "background:#f6f5f3;" : "";
-      const peso = esTotal ? "font-weight:700;" : "";
-      const td = (valor: string, alinear: "left" | "right" = "right") =>
-        `<td style="${fondo}${peso}padding:7px 8px;border-top:1px solid #e5e4e0;font-size:13px;color:#1a1a18;text-align:${alinear};white-space:nowrap">${valor}</td>`;
-      return `<tr>
-        ${td(esc(l.plataforma), "left")}
-        ${td(String(l.publicaciones))}
-        ${td(numeroFino(l.visitas_perfil))}
-        ${td(numeroFino(l.vistas_seguidores))}
-        ${td(numeroFino(l.vistas_no_seguidores))}
-        ${td(porcentaje(l.pct_no_seguidores))}
-      </tr>`;
-    })
-    .join("");
-
-  return `${titulo}
-  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border:1px solid #e5e4e0;border-radius:8px;border-collapse:separate;background:#ffffff">
-    <tr>
-      ${th("Plataforma", "left")}
-      ${th("Pub.")}
-      ${th("Visitas al perfil")}
-      ${th("Vistas seguidores")}
-      ${th("Vistas no seguidores")}
-      ${th("% no seguidores")}
-    </tr>
-    ${filas}
-  </table>
-  <p style="margin:6px 0 0;font-size:11px;color:#8a8a82">
-    Promedio por publicación del día. Estas métricas se ingresan a mano y todavía no tienen línea base, por eso no llevan variación.
-  </p>`;
+function perfilDe(r: Reporte, plataforma: Plataforma): LineaPerfil | null {
+  return r.perfil.find((l) => l.plataforma === plataforma) ?? null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -259,7 +197,24 @@ function lineaKPI(nombre: string, valor: string, d: number | null): string {
   </tr>`;
 }
 
-function bloqueKPI(l: LineaPanel): string {
+/**
+ * Línea de métrica de perfil, con el mismo formato que las de KPI.
+ *
+ * Cuando hay dato lleva "(sin línea base)", igual que un KPI sin referencia:
+ * estas métricas se cargan a mano y todavía no tienen promedio histórico. Sin
+ * dato queda solo el guion, porque "— (sin línea base)" no dice nada útil.
+ */
+function lineaPerfil(nombre: string, valor: number | null, texto: string): string {
+  if (valor !== null) return lineaKPI(nombre, texto, null);
+  return `<tr>
+    <td style="padding:3px 0;font-size:14px;color:#33332f">
+      <span style="color:#6e6e68">${esc(nombre)}:</span>
+      <strong style="color:#8a8a82">${texto}</strong>
+    </td>
+  </tr>`;
+}
+
+function bloqueKPI(l: LineaPanel, perfil: LineaPerfil | null): string {
   const conAlcance = tieneAlcance(l.plataforma);
   const filas = [
     conAlcance
@@ -273,6 +228,29 @@ function bloqueKPI(l: LineaPanel): string {
       numeroFino(l.dia.nuevos_seguidores),
       l.deltas.nuevos_seguidores,
     ),
+    // §4.3 — las métricas de perfil van en el mismo bloque, a continuación.
+    ...(perfil
+      ? [
+          lineaPerfil("Visitas al perfil", perfil.visitas_perfil, numeroFino(perfil.visitas_perfil)),
+          lineaPerfil(
+            "Vistas de seguidores",
+            perfil.vistas_seguidores,
+            numeroFino(perfil.vistas_seguidores),
+          ),
+          lineaPerfil(
+            "Vistas de no seguidores",
+            perfil.vistas_no_seguidores,
+            numeroFino(perfil.vistas_no_seguidores),
+          ),
+          lineaPerfil(
+            "% de no seguidores",
+            perfil.pct_no_seguidores,
+            porcentaje(perfil.pct_no_seguidores),
+          ),
+        ]
+      : [
+          `<tr><td style="padding:3px 0;font-size:13px;color:#8a8a82">Métricas de perfil: no se cargaron</td></tr>`,
+        ]),
   ].join("");
 
   const nota = conAlcance
@@ -402,11 +380,9 @@ export function htmlCorreo(r: Reporte, opciones: OpcionesCorreo = {}): string {
   ${H2("KPIs del día por plataforma")}
   ${
     r.bloques.length > 0
-      ? r.bloques.map(bloqueKPI).join("")
+      ? r.bloques.map((b) => bloqueKPI(b, perfilDe(r, b.plataforma))).join("")
       : `<p style="margin:0;font-size:14px;color:#8a8a82">No hay plataformas con registros para este día.</p>`
   }
-
-  ${tablaPerfil(r.perfil)}
 
   ${secciones ? H2("Lectura del día") + secciones : ""}
 
@@ -465,23 +441,41 @@ export function textoPlano(r: Reporte): string {
     l.push(
       linea("Seguidores nuevos", numeroFino(b.dia.nuevos_seguidores), b.deltas.nuevos_seguidores),
     );
+
+    // §4.3 — métricas de perfil, en el mismo bloque y con el mismo formato.
+    const perfil = perfilDe(r, b.plataforma);
+    if (!perfil) {
+      l.push("    Métricas de perfil: no se cargaron");
+    } else {
+      const lineaPerfilTexto = (n: string, valor: number | null, texto: string) =>
+        valor === null ? `    ${n}: ${texto}` : `    ${n}: ${texto} (sin línea base)`;
+      l.push(
+        lineaPerfilTexto("Visitas al perfil", perfil.visitas_perfil, numeroFino(perfil.visitas_perfil)),
+      );
+      l.push(
+        lineaPerfilTexto(
+          "Vistas de seguidores",
+          perfil.vistas_seguidores,
+          numeroFino(perfil.vistas_seguidores),
+        ),
+      );
+      l.push(
+        lineaPerfilTexto(
+          "Vistas de no seguidores",
+          perfil.vistas_no_seguidores,
+          numeroFino(perfil.vistas_no_seguidores),
+        ),
+      );
+      l.push(
+        lineaPerfilTexto(
+          "% de no seguidores",
+          perfil.pct_no_seguidores,
+          porcentaje(perfil.pct_no_seguidores),
+        ),
+      );
+    }
     l.push("");
   }
-
-  l.push("MÉTRICAS DE PERFIL DEL DÍA (promedio por publicación)");
-  if (r.perfil.length === 0) {
-    l.push("  No se cargaron métricas de perfil para este día.");
-  } else {
-    for (const p of r.perfil) {
-      l.push(`  ${p.plataforma} (${p.publicaciones} publicaciones)`);
-      l.push(`    Visitas al perfil: ${numeroFino(p.visitas_perfil)}`);
-      l.push(`    Vistas de seguidores: ${numeroFino(p.vistas_seguidores)}`);
-      l.push(`    Vistas de no seguidores: ${numeroFino(p.vistas_no_seguidores)}`);
-      l.push(`    % de no seguidores: ${porcentaje(p.pct_no_seguidores)}`);
-    }
-    l.push("  Sin variación: se ingresan a mano y todavía no tienen línea base.");
-  }
-  l.push("");
 
   for (const [k, pregunta] of PREGUNTAS) {
     const t = r.textos[k];
