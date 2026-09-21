@@ -1,0 +1,52 @@
+# Mantiene despierto el proyecto de Supabase.
+#
+# El plan gratuito pausa un proyecto tras 7 días sin actividad, y reanudarlo es
+# manual: la aplicación queda caída hasta que alguien entra al panel. Ya pasó
+# una vez, durante una semana sin uso.
+#
+# Esto hace una consulta mínima cada día, que cuenta como actividad. No escribe
+# nada: solo lee, y con la clave pública anónima, que además está bloqueada por
+# RLS y no devuelve ninguna fila.
+
+name: Mantener Supabase activa
+
+on:
+  schedule:
+    # 13:00 UTC ≈ 09:00 o 10:00 en Chile según el horario de verano.
+    # GitHub puede atrasar la ejecución, pero para un margen de 7 días sobra.
+    - cron: "0 13 * * *"
+  # Para poder dispararlo a mano desde la pestaña Actions.
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Consultar la base
+        env:
+          URL: ${{ secrets.SUPABASE_URL }}
+          CLAVE: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$CLAVE" ]; then
+            echo "Faltan los secretos SUPABASE_URL y SUPABASE_ANON_KEY."
+            echo "Se configuran en Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+          codigo=$(curl -s -m 30 -o /dev/null -w "%{http_code}" \
+            "$URL/rest/v1/perfiles?select=id&limit=1" \
+            -H "apikey: $CLAVE")
+
+          echo "Respuesta: $codigo"
+
+          # 200 con RLS devuelve una lista vacía, y eso es exactamente lo
+          # esperado: lo que importa es que la base respondió.
+          if [ "$codigo" = "200" ]; then
+            echo "El proyecto está activo."
+            exit 0
+          fi
+
+          echo "El proyecto no respondió como se esperaba."
+          echo "Si el código es 000, lo más probable es que esté pausado:"
+          echo "entra a supabase.com y aprieta Resume project."
+          exit 1

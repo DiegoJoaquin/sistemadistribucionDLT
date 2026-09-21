@@ -196,6 +196,29 @@ Hay que crear un proyecto en Supabase, aplicar la migración con
 `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY` como variables de
 entorno en Vercel.
 
+### Si la aplicación deja de responder de un día para otro
+
+El plan gratuito de Supabase **pausa el proyecto tras 7 días sin actividad**.
+Cuando eso pasa, el dominio del proyecto deja de resolver y la aplicación cae
+entera: al entrar no carga nada y el login falla. Los datos siguen intactos.
+
+Se arregla en supabase.com → el proyecto → **Resume project**. Tarda unos
+minutos y no hay que tocar ni el código ni las variables de entorno: la URL y
+las claves no cambian.
+
+Para que no vuelva a pasar, `.github/workflows/mantener-supabase-activa.yml`
+hace una consulta diaria que cuenta como actividad. Necesita dos secretos en
+GitHub (Settings → Secrets and variables → Actions):
+
+- `SUPABASE_URL` — la URL del proyecto
+- `SUPABASE_ANON_KEY` — la clave pública anónima
+
+Dos advertencias sobre esa automatización: GitHub desactiva los workflows
+programados en repositorios sin actividad durante 60 días (cualquier commit
+reinicia la cuenta), y si el equipo usa la plataforma todos los días el
+proyecto no se pausa igual. El workflow es un seguro para vacaciones y
+feriados largos, no un reemplazo del uso.
+
 > **Nota sobre OneDrive:** el proyecto vive dentro de una carpeta sincronizada.
 > Conviene excluir `node_modules` y `.next` de la sincronización, o mover el
 > repositorio fuera de OneDrive: la sincronización de miles de archivos
