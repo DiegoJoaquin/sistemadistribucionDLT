@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
   desdeFormData,
+  esquemaCuenta,
   esquemaRegistro,
   esquemaReporte,
   primerError,
@@ -586,6 +587,81 @@ export async function guardarReporte(
 
   revalidatePath("/reporte");
   return { ok: true, mensaje: "Texto guardado." };
+}
+
+/* ------------------------------------------------------------------ */
+/* Sesión                                                              */
+/* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* Cuentas                                                             */
+/* ------------------------------------------------------------------ */
+
+/** Las cuentas aparecen en todas las vistas, así que se revalidan todas. */
+function revalidarVistasDeCuentas(): void {
+  revalidatePath("/cuentas");
+  revalidarVistasDeRegistros();
+  revalidatePath("/base");
+}
+
+/** El nombre es único en la base; el error crudo de Postgres no se entiende. */
+function mensajeDeCuenta(error: { code?: string; message: string }): string {
+  if (error.code === "23505") {
+    return "Ya existe una cuenta con ese nombre. Usa uno distinto para poder distinguirlas en los reportes.";
+  }
+  return error.message;
+}
+
+export async function crearCuenta(
+  _previo: Resultado | null,
+  fd: FormData,
+): Promise<Resultado> {
+  await exigirSesion();
+  const parseado = esquemaCuenta.safeParse(desdeFormData(fd));
+  if (!parseado.success) return { ok: false, mensaje: primerError(parseado.error) };
+
+  const supabase = await supabaseServidor();
+  const { error } = await supabase.from("cuentas").insert(parseado.data);
+  if (error) return { ok: false, mensaje: mensajeDeCuenta(error) };
+
+  revalidarVistasDeCuentas();
+  return { ok: true, mensaje: `Cuenta ${parseado.data.nombre} creada.` };
+}
+
+export async function actualizarCuenta(
+  _previo: Resultado | null,
+  fd: FormData,
+): Promise<Resultado> {
+  await exigirSesion();
+  const id = String(fd.get("id") ?? "");
+  if (!id) return { ok: false, mensaje: "Falta el identificador de la cuenta." };
+
+  const parseado = esquemaCuenta.safeParse(desdeFormData(fd));
+  if (!parseado.success) return { ok: false, mensaje: primerError(parseado.error) };
+
+  const supabase = await supabaseServidor();
+  const { error } = await supabase.from("cuentas").update(parseado.data).eq("id", id);
+  if (error) return { ok: false, mensaje: mensajeDeCuenta(error) };
+
+  revalidarVistasDeCuentas();
+  return { ok: true, mensaje: "Cambios guardados." };
+}
+
+/**
+ * Una cuenta que se deja de usar se desactiva, no se borra: sus registros
+ * históricos tienen que seguir existiendo y hay que poder rotularlos. Por eso
+ * no hay acción de borrado.
+ */
+export async function alternarCuentaActiva(fd: FormData): Promise<void> {
+  await exigirSesion();
+  const id = String(fd.get("id") ?? "");
+  const activar = fd.get("activar") === "true";
+  if (!id) return;
+
+  const supabase = await supabaseServidor();
+  await supabase.from("cuentas").update({ activa: activar }).eq("id", id);
+
+  revalidarVistasDeCuentas();
 }
 
 /* ------------------------------------------------------------------ */

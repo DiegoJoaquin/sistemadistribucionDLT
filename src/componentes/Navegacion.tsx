@@ -10,6 +10,7 @@ const ENLACES = [
   { href: "/perfil", texto: "Métricas de perfil" },
   { href: "/base", texto: "Línea base" },
   { href: "/reporte", texto: "Reporte" },
+  { href: "/cuentas", texto: "Cuentas" },
 ] as const;
 
 export function Navegacion() {

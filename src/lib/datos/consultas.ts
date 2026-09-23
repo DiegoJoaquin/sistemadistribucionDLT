@@ -17,8 +17,10 @@ import {
   ORDEN_PLATAFORMAS,
   type Plataforma,
 } from "@/lib/dominio/plataformas";
+import { ordenarCuentas } from "@/lib/dominio/redes";
 import { supabaseServidor } from "@/lib/supabase/servidor";
 import type {
+  CuentaRow,
   LineaBaseDetalleRow,
   LineaBaseRow,
   PublicacionBaseRow,
@@ -304,6 +306,39 @@ export async function detalleLineaBase(
     .eq("linea_base_id", lineaBaseId);
   if (error) throw new Error(`No pude leer el detalle: ${error.message}`);
   return (data ?? []) as LineaBaseDetalleRow[];
+}
+
+/* ------------------------------------------------------------------ */
+/* Cuentas                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Todas las cuentas, ordenadas para mostrar: primero las propias, después las
+ * de influencers. Incluye las desactivadas, porque sus registros históricos
+ * siguen existiendo y hay que poder rotularlos.
+ */
+export async function listarCuentas(): Promise<CuentaRow[]> {
+  const supabase = await supabaseServidor();
+  const { data, error } = await supabase.from("cuentas").select("*");
+  if (error) throw new Error(`No pude leer las cuentas: ${error.message}`);
+  return ordenarCuentas((data ?? []) as CuentaRow[]) as CuentaRow[];
+}
+
+/** Solo las que están en uso, para los selectores de carga. */
+export async function cuentasActivas(): Promise<CuentaRow[]> {
+  return (await listarCuentas()).filter((c) => c.activa);
+}
+
+/** Cuántas filas depende de cada cuenta, para avisar antes de desactivarla. */
+export async function usoDeCuentas(): Promise<Map<string, number>> {
+  const supabase = await supabaseServidor();
+  const { data } = await supabase.from("registros").select("cuenta_id").limit(10_000);
+  const uso = new Map<string, number>();
+  for (const fila of (data ?? []) as { cuenta_id: string | null }[]) {
+    if (!fila.cuenta_id) continue;
+    uso.set(fila.cuenta_id, (uso.get(fila.cuenta_id) ?? 0) + 1);
+  }
+  return uso;
 }
 
 export async function lineaBasePorId(id: string): Promise<LineaBaseRow | null> {

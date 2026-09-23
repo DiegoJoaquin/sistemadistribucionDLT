@@ -1,5 +1,11 @@
 import type { Categoria, Plataforma } from "@/lib/dominio/plataformas";
+import type { Cuenta, Red } from "@/lib/dominio/redes";
 import type { FuenteImport } from "@/lib/importar/tipos";
+
+/** Fila de `cuentas`. La forma de dominio vive en `redes.ts`. */
+export interface CuentaRow extends Cuenta {
+  creado_en: string;
+}
 
 export interface PerfilRow {
   id: string;
@@ -16,6 +22,15 @@ export interface PerfilRow {
 export interface RegistroRow {
   id: string;
   fecha: string;
+  cuenta_id: string;
+  /*
+   * Transitoria. En la base es nullable, porque una cuenta de influencer no
+   * tiene equivalente en el enum viejo. Acá se declara no-nula porque describe
+   * los datos que existen hoy: el formulario de carga todavía solo ofrece las
+   * cinco cuentas originales, así que no hay forma de crear una fila sin
+   * plataforma. Pasa a `| null` en la etapa 2, junto con los consumidores que
+   * hoy dependen de ella.
+   */
   plataforma: Plataforma;
   categoria: Categoria | null;
   publicaciones: number;
@@ -50,6 +65,8 @@ export interface LineaBaseRow {
 export interface PublicacionBaseRow {
   id: string;
   linea_base_id: string;
+  cuenta_id: string;
+  /** Transitoria, igual que en `registros`. */
   plataforma: Plataforma;
   publicado_en: string | null;
   formato: Categoria | null;
@@ -77,8 +94,13 @@ export interface PublicacionBaseRow {
 /** Fila de la vista `lineas_base_detalle`. */
 export interface LineaBaseDetalleRow {
   linea_base_id: string;
+  cuenta_id: string;
+  /** Nombre de la cuenta: viene en la vista para no pedirlo aparte. */
+  cuenta: string;
+  red: Red;
+  /** Alias de transición, con el mismo valor que `cuenta`. */
   plataforma: Plataforma;
-  /** null = fila TOTAL de la plataforma (§9.2). */
+  /** null = fila TOTAL de la cuenta (§9.2). */
   categoria: Categoria | null;
   n_publicaciones: number;
   alcance_prom: number | null;

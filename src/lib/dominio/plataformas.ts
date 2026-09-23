@@ -1,11 +1,37 @@
 /**
- * Enums de plataforma y categoría.
+ * Las cinco cuentas originales, como enum.
  *
- * Regla de negocio §9.3: los nombres NUNCA son texto libre. En el Excel alguien
- * escribió "Normal (informativo)" en lugar de "Normal" y rompió todas las
- * comparaciones contra la línea base. Acá son uniones cerradas de TypeScript y
- * enums de Postgres: un valor fuera de la lista no compila ni entra a la base.
+ * Este módulo es transitorio. Las cuentas ya son datos (ver `redes.ts` y la
+ * tabla `cuentas`), pero buena parte de la aplicación todavía las trata como
+ * un enum de cinco valores, y convertir todo de una sola vez sería un cambio
+ * imposible de revisar. Mientras dure la transición, acá se mantiene la API
+ * vieja, pero **sin duplicar las reglas**: cada plataforma sabe a qué red
+ * pertenece y las preguntas se delegan a la red.
+ *
+ * Cuando el último archivo deje de importar desde acá, este módulo se borra
+ * junto con la columna `plataforma` de la base.
  */
+
+import {
+  categoriasDeRed,
+  COLOR_RED,
+  COLOR_RED_2,
+  denominadorEngagementRed,
+  esCategoriaValidaEnRed,
+  type Red,
+  tieneAlcanceRed,
+} from "./redes";
+import { type Categoria } from "./categorias";
+
+// Se re-exportan para no romper los imports existentes.
+export {
+  CATEGORIAS,
+  type Categoria,
+  esCategoria,
+  FORMATOS_INSTAGRAM,
+  TIPOS_INSTAGRAM,
+} from "./categorias";
+export { type Red, REDES, esRed } from "./redes";
 
 export const PLATAFORMAS = [
   "Instagram DLT",
@@ -17,70 +43,47 @@ export const PLATAFORMAS = [
 
 export type Plataforma = (typeof PLATAFORMAS)[number];
 
-export const CATEGORIAS = [
-  "Reactivo",
-  "Normal",
-  "Imagen",
-  "Reel",
-  "Carrusel",
-  "Short",
-  "Video",
-  "Foto",
-] as const;
-
-export type Categoria = (typeof CATEGORIAS)[number];
-
-/**
- * En Instagram conviven dos clasificaciones sobre la misma publicación:
- *  - tipo de contenido: Reactivo | Normal
- *  - formato:           Imagen | Reel | Carrusel
- *
- * §3.2: una publicación pertenece a una de cada una, pero en el registro diario
- * se etiqueta con UNA SOLA. Por eso el TOTAL jamás se calcula sumando categorías
- * (se contaría dos veces) — ver `filasDeTotal` en calculo.ts.
- */
-export const TIPOS_INSTAGRAM = ["Reactivo", "Normal"] as const;
-export const FORMATOS_INSTAGRAM = ["Imagen", "Reel", "Carrusel"] as const;
+/** A qué red pertenece cada una de las cinco cuentas originales. */
+export const RED_DE_PLATAFORMA: Record<Plataforma, Red> = {
+  "Instagram DLT": "Instagram",
+  "Instagram DBF": "Instagram",
+  TikTok: "TikTok",
+  YouTube: "YouTube",
+  "Twitter/X": "Twitter/X",
+};
 
 export const CATEGORIAS_POR_PLATAFORMA: Record<Plataforma, readonly Categoria[]> = {
-  "Instagram DLT": [...TIPOS_INSTAGRAM, ...FORMATOS_INSTAGRAM],
-  "Instagram DBF": [...TIPOS_INSTAGRAM, ...FORMATOS_INSTAGRAM],
-  // La especificación original decía "sin categorías, solo total", pero el
-  // equipo lo registra como Video: así queda etiquetado y no como "sin
-  // categoría".
-  TikTok: ["Video"],
-  YouTube: ["Short", "Video"],
-  "Twitter/X": ["Video", "Foto"],
+  "Instagram DLT": categoriasDeRed("Instagram"),
+  "Instagram DBF": categoriasDeRed("Instagram"),
+  TikTok: categoriasDeRed("TikTok"),
+  YouTube: categoriasDeRed("YouTube"),
+  "Twitter/X": categoriasDeRed("Twitter/X"),
 };
 
 export function categoriasDe(plataforma: Plataforma): readonly Categoria[] {
-  return CATEGORIAS_POR_PLATAFORMA[plataforma];
+  return categoriasDeRed(RED_DE_PLATAFORMA[plataforma]);
 }
 
-export function esCategoriaValida(plataforma: Plataforma, categoria: Categoria | null): boolean {
-  if (categoria === null) return true; // null = "sin categoría" (TikTok) o fila TOTAL
-  return CATEGORIAS_POR_PLATAFORMA[plataforma].includes(categoria);
+export function esCategoriaValida(
+  plataforma: Plataforma,
+  categoria: Categoria | null,
+): boolean {
+  return esCategoriaValidaEnRed(RED_DE_PLATAFORMA[plataforma], categoria);
 }
 
 export function esPlataforma(v: unknown): v is Plataforma {
   return typeof v === "string" && (PLATAFORMAS as readonly string[]).includes(v);
 }
 
-export function esCategoria(v: unknown): v is Categoria {
-  return typeof v === "string" && (CATEGORIAS as readonly string[]).includes(v);
-}
-
-/**
- * §9.6: YouTube no entrega alcance. Su engagement se calcula sobre
- * visualizaciones y debe rotularse como NO comparable con las otras plataformas.
- */
+/** §9.6 — YouTube no entrega alcance. */
 export function tieneAlcance(plataforma: Plataforma): boolean {
-  return plataforma !== "YouTube";
+  return tieneAlcanceRed(RED_DE_PLATAFORMA[plataforma]);
 }
 
-/** Etiqueta de la métrica que hace de denominador del engagement. */
-export function denominadorEngagement(plataforma: Plataforma): "alcance" | "visualizaciones" {
-  return tieneAlcance(plataforma) ? "alcance" : "visualizaciones";
+export function denominadorEngagement(
+  plataforma: Plataforma,
+): "alcance" | "visualizaciones" {
+  return denominadorEngagementRed(RED_DE_PLATAFORMA[plataforma]);
 }
 
 export const CUENTAS: Record<Plataforma, string> = {
@@ -91,28 +94,29 @@ export const CUENTAS: Record<Plataforma, string> = {
   "Twitter/X": "Cuenta DLT",
 };
 
-/** Color de marca por plataforma. §8: se usa como acento, nunca como fondo. */
+/**
+ * Color por plataforma. DBF tiene su propio violeta, que es más específico que
+ * el de la red; el resto sale del color de su red.
+ */
 export const COLOR_PLATAFORMA: Record<Plataforma, string> = {
-  "Instagram DLT": "#d6216f",
+  "Instagram DLT": COLOR_RED.Instagram,
   "Instagram DBF": "#7c3aed",
-  TikTok: "#0f172a",
-  YouTube: "#dc2626",
-  "Twitter/X": "#111827",
+  TikTok: COLOR_RED.TikTok,
+  YouTube: COLOR_RED.YouTube,
+  "Twitter/X": COLOR_RED["Twitter/X"],
 };
 
-/** Acento secundario, para el filete de TikTok que en la marca es negro/cyan. */
 export const COLOR_PLATAFORMA_2: Record<Plataforma, string> = {
-  "Instagram DLT": "#f0a03c",
+  "Instagram DLT": COLOR_RED_2.Instagram,
   "Instagram DBF": "#a855f7",
-  TikTok: "#22d3ee",
-  YouTube: "#ef4444",
-  "Twitter/X": "#374151",
+  TikTok: COLOR_RED_2.TikTok,
+  YouTube: COLOR_RED_2.YouTube,
+  "Twitter/X": COLOR_RED_2["Twitter/X"],
 };
 
 /** Orden en que se muestran los bloques del panel diario. */
 export const ORDEN_PLATAFORMAS = PLATAFORMAS;
 
-/** Slug estable para URLs y anclas. */
 export const SLUG_PLATAFORMA: Record<Plataforma, string> = {
   "Instagram DLT": "ig-dlt",
   "Instagram DBF": "ig-dbf",

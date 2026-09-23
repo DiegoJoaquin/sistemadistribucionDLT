@@ -13,6 +13,7 @@ import {
   CATEGORIAS,
   esCategoriaValida,
   PLATAFORMAS,
+  REDES,
   tieneAlcance,
 } from "@/lib/dominio/plataformas";
 
@@ -114,6 +115,38 @@ export const esquemaReporte = z.object({
  * Pasa un FormData a objeto plano. Solo las entradas de texto: los archivos se
  * leen aparte.
  */
+/* ------------------------------------------------------------------ */
+/* Cuentas                                                             */
+/* ------------------------------------------------------------------ */
+
+export const esquemaCuenta = z.object({
+  nombre: z
+    .string({ message: "Escribe el nombre de la cuenta." })
+    .trim()
+    .min(2, "El nombre es demasiado corto.")
+    .max(80, "El nombre es demasiado largo."),
+  usuario: z
+    .string()
+    .trim()
+    .max(80)
+    .optional()
+    .transform((v) => v || null),
+  // §9.3: la red sí es un enum cerrado, porque de ella dependen las reglas.
+  red: z.enum(REDES, { message: "Elige la red de la cuenta." }),
+  // Las casillas no marcadas no viajan en el formulario: ausente es false.
+  es_influencer: z
+    .union([z.literal("on"), z.literal("true"), z.boolean()])
+    .optional()
+    .transform((v) => v === "on" || v === "true" || v === true),
+  orden: z.coerce
+    .number({ message: "El orden debe ser un número." })
+    .int("El orden debe ser un número entero.")
+    .min(0)
+    .max(9999)
+    .optional()
+    .transform((v) => v ?? 100),
+});
+
 export function desdeFormData(fd: FormData): Record<string, unknown> {
   const obj: Record<string, unknown> = {};
   for (const [k, v] of fd.entries()) {
