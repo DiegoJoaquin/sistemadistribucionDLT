@@ -79,7 +79,7 @@ afterAll(async () => {
 });
 
 interface FilaVista {
-  plataforma: Plataforma;
+  cuenta: string;
   categoria: Categoria | null;
   n_publicaciones: number;
   alcance_prom: string | null;
@@ -97,7 +97,7 @@ async function base(
 ): Promise<PromediosBase> {
   const r = await db.query<FilaVista>(
     `select * from public.lineas_base_detalle
-     where linea_base_id = $1 and plataforma = $2
+     where linea_base_id = $1 and cuenta = $2
        and categoria is not distinct from $3`,
     [LB, plataforma, categoria],
   );
@@ -176,7 +176,7 @@ describir("importación completa de agosto 2026", () => {
   it("TikTok tiene una sola categoría, Video, con las mismas 87 que el TOTAL", async () => {
     const r = await db.query<{ categoria: string }>(
       `select distinct categoria from public.lineas_base_detalle
-       where plataforma = 'TikTok' and categoria is not null`,
+       where cuenta = 'TikTok' and categoria is not null`,
     );
     expect(r.rows.map((x) => x.categoria)).toEqual(["Video"]);
 

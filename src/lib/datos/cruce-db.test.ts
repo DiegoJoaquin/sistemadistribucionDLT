@@ -94,7 +94,7 @@ async function totalVista() {
   }>(
     `select n_publicaciones, alcance_prom, nuevos_seguidores_prom
      from public.lineas_base_detalle
-     where plataforma = 'Instagram DLT' and categoria is null`,
+     where cuenta = 'Instagram DLT' and categoria is null`,
   );
   return r.rows[0];
 }

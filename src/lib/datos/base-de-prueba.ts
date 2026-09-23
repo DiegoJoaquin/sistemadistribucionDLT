@@ -64,10 +64,29 @@ export const PERMISOS_AUTHENTICATED = `
   grant execute on all functions in schema auth to authenticated;
 `;
 
-export async function aplicarMigraciones(db: PGlite, hasta?: string): Promise<void> {
+export interface RangoMigraciones {
+  /** Primera migración a aplicar, inclusive. */
+  desde?: string;
+  /** Última migración a aplicar, inclusive. */
+  hasta?: string;
+}
+
+/**
+ * Aplica las migraciones cuyo nombre cae en el rango, en orden.
+ *
+ * Acepta un rango y no solo un tope porque hay un caso que importa probar:
+ * cargar datos con el esquema viejo y aplicar recién después la migración, que
+ * es lo que pasa en producción. Para eso hay que poder retomar desde donde se
+ * quedó, sin reaplicar las anteriores.
+ */
+export async function aplicarMigraciones(
+  db: PGlite,
+  rango: RangoMigraciones = {},
+): Promise<void> {
   for (const archivo of listarMigraciones()) {
+    if (rango.desde && archivo < rango.desde) continue;
+    if (rango.hasta && archivo > rango.hasta) break;
     await db.exec(sqlMigracion(archivo));
-    if (hasta && archivo === hasta) return;
   }
 }
 

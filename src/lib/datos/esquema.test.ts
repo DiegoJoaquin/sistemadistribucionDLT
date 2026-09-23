@@ -209,7 +209,7 @@ describe("§3.2 y §9.2 — la vista de línea base desdobla sin contar de más"
   it("el TOTAL cuenta cada publicación una sola vez", async () => {
     const r = await filas<{ n_publicaciones: number; alcance_prom: string }>(
       `select n_publicaciones, alcance_prom from public.lineas_base_detalle
-       where plataforma = 'Instagram DLT' and categoria is null`,
+       where cuenta = 'Instagram DLT' and categoria is null`,
     );
     expect(r[0].n_publicaciones).toBe(3); // no 6, aunque cada una aporta a 2 categorías
     expect(Number(r[0].alcance_prom)).toBeCloseTo(240_000 / 3, 6);
@@ -218,7 +218,7 @@ describe("§3.2 y §9.2 — la vista de línea base desdobla sin contar de más"
   it("TikTok, sin formato ni tipo, no se triplica en el TOTAL", async () => {
     const r = await filas<{ n_publicaciones: number }>(
       `select n_publicaciones from public.lineas_base_detalle
-       where plataforma = 'TikTok' and categoria is null`,
+       where cuenta = 'TikTok' and categoria is null`,
     );
     expect(r[0].n_publicaciones).toBe(2); // el select distinct evita las 3 filas por publicación
   });
@@ -226,7 +226,7 @@ describe("§3.2 y §9.2 — la vista de línea base desdobla sin contar de más"
   it("TikTok no genera ninguna línea de categoría", async () => {
     const r = await filas(
       `select categoria from public.lineas_base_detalle
-       where plataforma = 'TikTok' and categoria is not null`,
+       where cuenta = 'TikTok' and categoria is not null`,
     );
     expect(r).toHaveLength(0);
   });
@@ -234,7 +234,7 @@ describe("§3.2 y §9.2 — la vista de línea base desdobla sin contar de más"
   it("una publicación aparece tanto en su formato como en su tipo", async () => {
     const r = await filas<{ categoria: string; n_publicaciones: number }>(
       `select categoria, n_publicaciones from public.lineas_base_detalle
-       where plataforma = 'Instagram DLT' and categoria is not null
+       where cuenta = 'Instagram DLT' and categoria is not null
        order by categoria`,
     );
     const m = Object.fromEntries(r.map((x) => [x.categoria, x.n_publicaciones]));
@@ -247,7 +247,7 @@ describe("§3.2 y §9.2 — la vista de línea base desdobla sin contar de más"
   it("§9.6 — el engagement de YouTube sale sobre visualizaciones", async () => {
     const r = await filas<{ engagement_prom: string; alcance_prom: string | null }>(
       `select engagement_prom, alcance_prom from public.lineas_base_detalle
-       where plataforma = 'YouTube' and categoria is null`,
+       where cuenta = 'YouTube' and categoria is null`,
     );
     expect(r[0].alcance_prom).toBeNull();
     expect(Number(r[0].engagement_prom)).toBeCloseTo(1_000 / 50_000, 10);
@@ -256,7 +256,7 @@ describe("§3.2 y §9.2 — la vista de línea base desdobla sin contar de más"
   it("el engagement es razón de sumas, no promedio de razones", async () => {
     const r = await filas<{ engagement_prom: string }>(
       `select engagement_prom from public.lineas_base_detalle
-       where plataforma = 'TikTok' and categoria is null`,
+       where cuenta = 'TikTok' and categoria is null`,
     );
     // (10.000 + 4.000) / (200.000 + 100.000)
     expect(Number(r[0].engagement_prom)).toBeCloseTo(14_000 / 300_000, 10);
@@ -269,7 +269,7 @@ describe("§3.2 y §9.2 — la vista de línea base desdobla sin contar de más"
     );
     const r = await filas<{ categoria: string; n_publicaciones: number }>(
       `select categoria, n_publicaciones from public.lineas_base_detalle
-       where plataforma = 'Instagram DLT' and categoria in ('Reactivo','Normal')
+       where cuenta = 'Instagram DLT' and categoria in ('Reactivo','Normal')
        order by categoria`,
     );
     const m = Object.fromEntries(r.map((x) => [x.categoria, x.n_publicaciones]));
