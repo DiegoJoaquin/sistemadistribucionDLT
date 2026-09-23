@@ -125,10 +125,10 @@ export default async function PaginaBase() {
                       <tbody>
                         {filas.map((f) => (
                           <tr
-                            key={f.plataforma}
+                            key={f.cuenta_id}
                             className="border-b border-[var(--color-filete)] last:border-0"
                           >
-                            <td className="td font-medium">{f.plataforma}</td>
+                            <td className="td font-medium">{f.cuenta}</td>
                             <td className="td text-right cifra">{f.n_publicaciones}</td>
                             <td className="td text-right">
                               <Cifra valor={f.alcance_prom} />

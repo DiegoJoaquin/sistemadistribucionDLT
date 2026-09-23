@@ -67,7 +67,7 @@ export default async function PaginaPanel(props: PageProps<"/panel">) {
       ) : (
         <div className="space-y-4">
           {panel.bloques.map((b) => (
-            <BloquePanel key={b.plataforma} bloque={b} />
+            <BloquePanel key={b.cuenta.id} bloque={b} />
           ))}
         </div>
       )}

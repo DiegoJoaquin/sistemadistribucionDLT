@@ -5,6 +5,12 @@ import {
   CUENTAS,
   type Plataforma,
 } from "@/lib/dominio/plataformas";
+import {
+  colorDeCuenta,
+  colorSecundarioDeCuenta,
+  type Cuenta,
+  usuarioVisible,
+} from "@/lib/dominio/redes";
 import { GUION, numero, numeroFino, porcentaje } from "@/lib/dominio/formato";
 
 /** Número grande y tabular. Null se muestra como guion, nunca como 0 (§9.4). */
@@ -68,6 +74,39 @@ export function Nota({ children }: { children: ReactNode }) {
  * Cabecera de bloque de plataforma. §8: el color de marca se usa como acento
  * (un filete lateral y un punto), nunca como fondo.
  */
+/**
+ * Cabecera de bloque de cuenta. §8: el color de marca se usa como acento (un
+ * filete lateral), nunca como fondo.
+ */
+export function CabeceraCuenta({
+  cuenta,
+  derecha,
+}: {
+  cuenta: Cuenta;
+  derecha?: ReactNode;
+}) {
+  const usuario = usuarioVisible(cuenta);
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[var(--color-filete)] px-4 py-3">
+      <div className="flex items-center gap-2.5">
+        <span
+          aria-hidden
+          className="h-3.5 w-1.5 rounded-full"
+          style={{
+            background: `linear-gradient(${colorDeCuenta(cuenta)}, ${colorSecundarioDeCuenta(cuenta)})`,
+          }}
+        />
+        <h2 className="text-sm font-semibold tracking-tight">{cuenta.nombre}</h2>
+        {usuario && (
+          <span className="text-xs text-[var(--color-tinta-tenue)]">{usuario}</span>
+        )}
+      </div>
+      {derecha}
+    </div>
+  );
+}
+
+/** Versión por plataforma, todavía en uso por la vista de línea base. */
 export function CabeceraPlataforma({
   plataforma,
   derecha,

@@ -10,7 +10,7 @@ import {
 import { Cifra, Pct } from "@/componentes/ui";
 import type { BloqueDia, DetalleFila } from "@/lib/datos/consultas";
 import { fechaHoraCorta } from "@/lib/dominio/formato";
-import { tieneAlcance } from "@/lib/dominio/plataformas";
+import { tieneAlcanceRed } from "@/lib/dominio/redes";
 
 const COLUMNAS = 12;
 const COLUMNAS_DETALLE = 13;
@@ -69,20 +69,20 @@ export function TablaHistoricoDia({
         </thead>
         <tbody>
           {bloques.map(({ linea, detalle }) => {
-            const abierta = abiertas.has(linea.plataforma);
-            const conAlcance = tieneAlcance(linea.plataforma);
+            const abierta = abiertas.has(linea.cuenta.id);
+            const conAlcance = tieneAlcanceRed(linea.cuenta.red);
 
             return (
-              <Fragment key={linea.plataforma}>
+              <Fragment key={linea.cuenta.id}>
                 <tr
-                  onClick={() => alternar(linea.plataforma)}
+                  onClick={() => alternar(linea.cuenta.id)}
                   className="cursor-pointer border-b border-[var(--color-filete)] hover:bg-[var(--color-realce)]/50"
                 >
                   <td className="td text-center">
                     <button
                       type="button"
                       aria-expanded={abierta}
-                      aria-label={`${abierta ? "Ocultar" : "Ver"} el desglose de ${linea.plataforma}`}
+                      aria-label={`${abierta ? "Ocultar" : "Ver"} el desglose de ${linea.cuenta.nombre}`}
                       className="text-[var(--color-tinta-tenue)] transition hover:text-[var(--color-tinta)]"
                     >
                       <span
@@ -94,7 +94,7 @@ export function TablaHistoricoDia({
                       </span>
                     </button>
                   </td>
-                  <td className="td font-medium">{linea.plataforma}</td>
+                  <td className="td font-medium">{linea.cuenta.nombre}</td>
                   <td className="td text-right">
                     <span className="cifra">{linea.publicaciones}</span>
                     <span className="ml-1.5 text-[11px] text-[var(--color-tinta-tenue)]">
@@ -143,7 +143,7 @@ export function TablaHistoricoDia({
                   <tr className="border-b border-[var(--color-filete)]">
                     <td colSpan={COLUMNAS} className="bg-[var(--color-realce)]/40 px-3 py-3">
                       <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-tinta-suave)]">
-                        Desglose de {linea.plataforma} · valores por publicación
+                        Desglose de {linea.cuenta.nombre} · valores por publicación
                         de cada carga
                       </p>
 
@@ -186,7 +186,7 @@ export function TablaHistoricoDia({
                                   key={d.registro.id}
                                   d={d}
                                   conAlcance={conAlcance}
-                                  plataforma={linea.plataforma}
+                                  cuenta={linea.cuenta.nombre}
                                   onEditar={() => setEditando(d.registro.id)}
                                 />
                               ),
@@ -209,12 +209,12 @@ export function TablaHistoricoDia({
 function FilaDetalle({
   d,
   conAlcance,
-  plataforma,
+  cuenta,
   onEditar,
 }: {
   d: DetalleFila;
   conAlcance: boolean;
-  plataforma: string;
+  cuenta: string;
   onEditar: () => void;
 }) {
   const r = d.registro;
@@ -251,7 +251,7 @@ function FilaDetalle({
           valor={d.deltas.alcance}
           titulo={
             d.sinBase
-              ? `No hay línea base para ${plataforma} · ${r.categoria ?? "sin categoría"}`
+              ? `No hay línea base para ${cuenta} · ${r.categoria ?? "sin categoría"}`
               : undefined
           }
         />

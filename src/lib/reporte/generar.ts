@@ -16,7 +16,8 @@ import {
   porcentaje,
   porcentajeDelta,
 } from "@/lib/dominio/formato";
-import { type Categoria, type Plataforma, tieneAlcance } from "@/lib/dominio/plataformas";
+import { type Categoria } from "@/lib/dominio/categorias";
+import { tieneAlcanceRed } from "@/lib/dominio/redes";
 import type { PanelDiario } from "@/lib/datos/consultas";
 import type { RegistroConAutor, ReporteRow } from "@/lib/supabase/tipos-db";
 
@@ -26,7 +27,8 @@ export const UMBRAL_DESTACADO = 0.8;
 export interface Destacada {
   id: string;
   titulo: string;
-  plataforma: Plataforma;
+  /** Nombre de la cuenta donde salió. */
+  cuenta: string;
   categoria: Categoria | null;
   publicaciones: number;
   enlace: string | null;
@@ -67,6 +69,8 @@ export interface Reporte {
 
 export interface FilaConDeltas {
   registro: RegistroConAutor;
+  /** Nombre de la cuenta: la fila sola no lo sabe. */
+  cuenta: string;
   deltas: Destacada["deltas"];
 }
 
@@ -76,10 +80,10 @@ function extremos(d: Destacada["deltas"]): { max: number | null; min: number | n
   return { max: Math.max(...vs), min: Math.min(...vs) };
 }
 
-function titulo(r: RegistroConAutor): string {
+function titulo(r: RegistroConAutor, cuenta: string): string {
   if (r.titulo_contenido) return r.titulo_contenido;
   const cat = r.categoria ? ` · ${r.categoria}` : "";
-  return `${r.plataforma}${cat} (sin título)`;
+  return `${cuenta}${cat} (sin título)`;
 }
 
 /**
@@ -95,12 +99,12 @@ export function construirReporte(
   const sobre: Destacada[] = [];
   const bajo: Destacada[] = [];
 
-  for (const { registro, deltas } of filas) {
+  for (const { registro, cuenta, deltas } of filas) {
     const { max, min } = extremos(deltas);
     const base: Omit<Destacada, "extremo"> = {
       id: registro.id,
-      titulo: titulo(registro),
-      plataforma: registro.plataforma,
+      titulo: titulo(registro, cuenta),
+      cuenta,
       categoria: registro.categoria,
       publicaciones: registro.publicaciones,
       enlace: registro.enlace,
@@ -138,11 +142,11 @@ export function construirReporte(
 
 /** Plataformas del día que tienen alguna métrica de perfil cargada. */
 function perfilDelReporte(panel: PanelDiario): LineaPerfil[] {
-  return panel.perfil.filter((l) => l.plataforma !== "TOTAL" && !l.sinDatos);
+  return panel.perfil.filter((l) => l.cuenta !== null && !l.sinDatos);
 }
 
-function perfilDe(r: Reporte, plataforma: Plataforma): LineaPerfil | null {
-  return r.perfil.find((l) => l.plataforma === plataforma) ?? null;
+function perfilDe(r: Reporte, cuentaId: string): LineaPerfil | null {
+  return r.perfil.find((l) => l.cuenta?.id === cuentaId) ?? null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -215,7 +219,7 @@ function lineaPerfil(nombre: string, valor: number | null, texto: string): strin
 }
 
 function bloqueKPI(l: LineaPanel, perfil: LineaPerfil | null): string {
-  const conAlcance = tieneAlcance(l.plataforma);
+  const conAlcance = tieneAlcanceRed(l.cuenta.red);
   const filas = [
     conAlcance
       ? lineaKPI("Alcance", numero(l.dia.alcance), l.deltas.alcance)
@@ -259,7 +263,7 @@ function bloqueKPI(l: LineaPanel, perfil: LineaPerfil | null): string {
 
   return `<div style="margin:0 0 16px;padding:12px 14px;border:1px solid #e5e4e0;border-radius:8px;background:#ffffff">
     <p style="margin:0 0 8px;font-size:14px;font-weight:700;color:#1a1a18">
-      ${esc(l.plataforma)}
+      ${esc(l.cuenta.nombre)}
       <span style="font-weight:400;color:#8a8a82">· ${l.publicaciones} ${
         l.publicaciones === 1 ? "publicación" : "publicaciones"
       }</span>
@@ -279,7 +283,7 @@ function tablaDestacadas(items: Destacada[], titulo: string, vacio: string): str
       (d) => `<tr>
         <td style="padding:8px 10px;border-top:1px solid #e5e4e0;font-size:13px;color:#1a1a18">
           <strong>${esc(d.titulo)}</strong><br>
-          <span style="color:#8a8a82;font-size:12px">${esc(d.plataforma)}${
+          <span style="color:#8a8a82;font-size:12px">${esc(d.cuenta)}${
             d.categoria ? ` · ${esc(d.categoria)}` : ""
           } · ${d.publicaciones} ${d.publicaciones === 1 ? "publicación" : "publicaciones"}</span>
         </td>
@@ -380,7 +384,7 @@ export function htmlCorreo(r: Reporte, opciones: OpcionesCorreo = {}): string {
   ${H2("KPIs del día por plataforma")}
   ${
     r.bloques.length > 0
-      ? r.bloques.map((b) => bloqueKPI(b, perfilDe(r, b.plataforma))).join("")
+      ? r.bloques.map((b) => bloqueKPI(b, perfilDe(r, b.cuenta.id))).join("")
       : `<p style="margin:0;font-size:14px;color:#8a8a82">No hay plataformas con registros para este día.</p>`
   }
 
@@ -411,7 +415,7 @@ export function textoPlano(r: Reporte): string {
       l.push(`  ${vacio}`);
     } else {
       for (const d of items) {
-        l.push(`  • ${d.titulo} — ${d.plataforma}${d.categoria ? ` · ${d.categoria}` : ""}`);
+        l.push(`  • ${d.titulo} — ${d.cuenta}${d.categoria ? ` · ${d.categoria}` : ""}`);
         l.push(
           `      alcance ${porcentajeDelta(d.deltas.alcance)} · visualizaciones ${porcentajeDelta(
             d.deltas.visualizaciones,
@@ -429,10 +433,10 @@ export function textoPlano(r: Reporte): string {
 
   l.push("KPIS DEL DÍA POR PLATAFORMA");
   for (const b of r.bloques) {
-    l.push(`  ${b.plataforma} (${b.publicaciones} publicaciones)`);
+    l.push(`  ${b.cuenta.nombre} (${b.publicaciones} publicaciones)`);
     const linea = (n: string, v: string, d: number | null) =>
       `    ${n}: ${v}${d === null ? "" : ` (${porcentajeDelta(d)} que promedio diario)`}`;
-    if (tieneAlcance(b.plataforma)) {
+    if (tieneAlcanceRed(b.cuenta.red)) {
       l.push(linea("Alcance", numero(b.dia.alcance), b.deltas.alcance));
     }
     l.push(linea("Visualizaciones", numero(b.dia.visualizaciones), b.deltas.visualizaciones));
@@ -443,7 +447,7 @@ export function textoPlano(r: Reporte): string {
     );
 
     // §4.3 — métricas de perfil, en el mismo bloque y con el mismo formato.
-    const perfil = perfilDe(r, b.plataforma);
+    const perfil = perfilDe(r, b.cuenta.id);
     if (!perfil) {
       l.push("    Métricas de perfil: no se cargaron");
     } else {

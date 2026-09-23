@@ -24,7 +24,8 @@ import {
   type FilaCalculo,
   type PromediosBase,
 } from "@/lib/dominio/calculo";
-import type { Categoria, Plataforma } from "@/lib/dominio/plataformas";
+import type { Categoria } from "@/lib/dominio/categorias";
+import type { Cuenta, Red } from "@/lib/dominio/redes";
 import { leerArchivo } from "@/lib/importar/parsers";
 import { baseDePrueba } from "./base-de-prueba";
 import { mesDe } from "@/lib/importar/util";
@@ -92,17 +93,17 @@ interface FilaVista {
 const aNum = (v: string | null) => (v === null ? null : Number(v));
 
 async function base(
-  plataforma: Plataforma,
+  cuenta: string,
   categoria: Categoria | null,
 ): Promise<PromediosBase> {
   const r = await db.query<FilaVista>(
     `select * from public.lineas_base_detalle
      where linea_base_id = $1 and cuenta = $2
        and categoria is not distinct from $3`,
-    [LB, plataforma, categoria],
+    [LB, cuenta, categoria],
   );
   const f = r.rows[0];
-  expect(f, `falta la línea base de ${plataforma}/${categoria ?? "TOTAL"}`).toBeDefined();
+  expect(f, `falta la línea base de ${cuenta}/${categoria ?? "TOTAL"}`).toBeDefined();
   return {
     n_publicaciones: f.n_publicaciones,
     alcance_prom: aNum(f.alcance_prom),
@@ -113,9 +114,27 @@ async function base(
   };
 }
 
-function fila(p: Partial<FilaCalculo>): FilaCalculo {
+/** Cuentas de prueba: el cálculo agrupa por cuenta, no por plataforma. */
+function cuentaDe(nombre: string, red: Red): Cuenta {
   return {
-    plataforma: "Instagram DLT",
+    id: `id-${nombre}`,
+    nombre,
+    usuario: null,
+    red,
+    es_influencer: false,
+    activa: true,
+    orden: 1,
+  };
+}
+
+const C_DLT = cuentaDe("Instagram DLT", "Instagram");
+const C_TIKTOK = cuentaDe("TikTok", "TikTok");
+const C_TWITTER = cuentaDe("Twitter/X", "Twitter/X");
+
+function fila(c: Cuenta, p: Partial<FilaCalculo> = {}): FilaCalculo {
+  return {
+    cuentaId: c.id,
+    red: c.red,
     categoria: null,
     publicaciones: 1,
     alcance: null,
@@ -214,8 +233,7 @@ describir("un día de registro comparado contra esta línea base", () => {
 
     // Un día flojo: 14 publicaciones que juntas alcanzaron 672.934 personas.
     const registros = [
-      fila({
-        plataforma: "Instagram DLT",
+      fila(C_DLT, {
         categoria: "Reel",
         publicaciones: 8,
         alcance: 400_000,
@@ -223,8 +241,7 @@ describir("un día de registro comparado contra esta línea base", () => {
         interacciones: 30_000,
         nuevos_seguidores: 60,
       }),
-      fila({
-        plataforma: "Instagram DLT",
+      fila(C_DLT, {
         categoria: "Imagen",
         publicaciones: 6,
         alcance: 272_934,
@@ -234,7 +251,7 @@ describir("un día de registro comparado contra esta línea base", () => {
       }),
     ];
 
-    const total = construirLinea(registros, "Instagram DLT", null, b);
+    const total = construirLinea(registros, C_DLT, null, b);
 
     expect(total.publicaciones).toBe(14);
     expect(total.dia.alcance!).toBeCloseTo(672_934 / 14, 6); // 48.066,7 por publicación
@@ -246,7 +263,7 @@ describir("un día de registro comparado contra esta línea base", () => {
 
   it("una plataforma sin registros ese día no muestra 0%, muestra guion", async () => {
     const b = await base("TikTok", null);
-    const linea = construirLinea([], "TikTok", null, b);
+    const linea = construirLinea([], C_TIKTOK, null, b);
     expect(linea.sinDatos).toBe(true);
     expect(linea.dia.alcance).toBeNull();
     expect(linea.deltas.alcance).toBeNull();
@@ -255,8 +272,8 @@ describir("un día de registro comparado contra esta línea base", () => {
   it("una categoría sin línea base tampoco muestra 0%", async () => {
     // Twitter/X no se importó: no hay línea base para esa plataforma.
     const linea = construirLinea(
-      [fila({ plataforma: "Twitter/X", categoria: "Video", publicaciones: 2, alcance: 5_000 })],
-      "Twitter/X",
+      [fila(C_TWITTER, { categoria: "Video", publicaciones: 2, alcance: 5_000 })],
+      C_TWITTER,
       "Video",
       null,
     );

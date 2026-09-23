@@ -5,6 +5,8 @@ import { Nota, Vacio } from "@/componentes/ui";
 import {
   aFilaCalculo,
   claveBase,
+  cuentasPorId,
+  listarCuentas,
   lineaBaseActiva,
   listarPerfiles,
   listarRegistros,
@@ -38,7 +40,7 @@ export default async function PaginaRegistro(props: PageProps<"/registro">) {
   const categoriaFiltro = primero(sp.categoria);
   const usuarioFiltro = primero(sp.usuario);
 
-  const [registros, base, perfiles] = await Promise.all([
+  const [registros, base, perfiles, cuentas] = await Promise.all([
     listarRegistros({
       desde,
       hasta,
@@ -48,7 +50,10 @@ export default async function PaginaRegistro(props: PageProps<"/registro">) {
     }),
     lineaBaseActiva(),
     listarPerfiles(),
+    listarCuentas(),
   ]);
+
+  const indice = cuentasPorId(cuentas);
 
   const mapa: MapaBase = base ? await promediosDeLineaBase(base.id) : new Map();
 
@@ -57,12 +62,14 @@ export default async function PaginaRegistro(props: PageProps<"/registro">) {
    * línea base de esa plataforma y categoría (§4.2). Una fila con 3
    * publicaciones y 30.000 de alcance vale 10.000, no 30.000.
    */
-  const filas: FilaTabla[] = registros.map((r) => {
-    const calc = aFilaCalculo(r);
-    const b = mapa.get(claveBase(r.plataforma, r.categoria)) ?? null;
+  const filas: FilaTabla[] = registros.flatMap((r) => {
+    const cuenta = indice.get(r.cuenta_id);
+    if (!cuenta) return [];
+    const calc = aFilaCalculo(r, cuenta);
+    const b = mapa.get(claveBase(cuenta.id, r.categoria)) ?? null;
     const uno = [calc];
 
-    return {
+    return [{
       registro: r,
       alcancePorPost: alcancePorPost(calc),
       sinBase: b === null,
@@ -81,7 +88,7 @@ export default async function PaginaRegistro(props: PageProps<"/registro">) {
           b?.nuevos_seguidores_prom,
         ),
       },
-    };
+    }];
   });
 
   const rango = desde === hasta ? desde : `${desde} a ${hasta}`;

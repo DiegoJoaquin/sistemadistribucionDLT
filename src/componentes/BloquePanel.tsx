@@ -1,9 +1,9 @@
 import { DeltaConBarra } from "@/componentes/Delta";
-import { CabeceraPlataforma, Cifra, Insignia, Pct } from "@/componentes/ui";
+import { CabeceraCuenta, Cifra, Insignia, Pct } from "@/componentes/ui";
 import type { LineaPanel } from "@/lib/dominio/calculo";
 import { numero, numeroFino, porcentaje } from "@/lib/dominio/formato";
-import { tieneAlcance } from "@/lib/dominio/plataformas";
-import type { BloquePlataforma } from "@/lib/datos/consultas";
+import { tieneAlcanceRed } from "@/lib/dominio/redes";
+import type { BloqueCuenta } from "@/lib/datos/consultas";
 
 /** Texto del tooltip con el valor de la línea base, para saber contra qué compara. */
 function contra(
@@ -17,7 +17,7 @@ function contra(
 }
 
 function Fila({ linea, total }: { linea: LineaPanel; total?: boolean }) {
-  const conAlcance = tieneAlcance(linea.plataforma);
+  const conAlcance = tieneAlcanceRed(linea.cuenta.red);
 
   return (
     <tr
@@ -87,14 +87,14 @@ function Fila({ linea, total }: { linea: LineaPanel; total?: boolean }) {
   );
 }
 
-export function BloquePanel({ bloque }: { bloque: BloquePlataforma }) {
-  const { plataforma, total, categorias, sinDatos } = bloque;
-  const conAlcance = tieneAlcance(plataforma);
+export function BloquePanel({ bloque }: { bloque: BloqueCuenta }) {
+  const { cuenta, total, categorias, sinDatos } = bloque;
+  const conAlcance = tieneAlcanceRed(cuenta.red);
 
   return (
     <section className="tarjeta overflow-hidden">
-      <CabeceraPlataforma
-        plataforma={plataforma}
+      <CabeceraCuenta
+        cuenta={cuenta}
         derecha={
           <div className="flex items-center gap-2">
             {!conAlcance && (
@@ -113,7 +113,7 @@ export function BloquePanel({ bloque }: { bloque: BloquePlataforma }) {
       {sinDatos ? (
         /* §8 — estados vacíos claros: nunca una tabla llena de ceros. */
         <p className="px-4 py-6 text-sm text-[var(--color-tinta-suave)]">
-          Sin registros de {plataforma} para este día.
+          Sin registros de {cuenta.nombre} para este día.
         </p>
       ) : (
         <div className="scroll-x">

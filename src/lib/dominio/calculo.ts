@@ -1,18 +1,20 @@
 /**
  * Motor de cálculo. Acá viven las reglas de §9 que se rompieron en el Excel.
  * Todo es puro: sin acceso a red ni a base de datos, para poder testearlo.
+ *
+ * Las filas se agrupan por **cuenta**, y las reglas que dependen de la
+ * plataforma (el engagement de YouTube) se resuelven por **red**. Antes las dos
+ * cosas eran lo mismo; dejaron de serlo cuando las cuentas pasaron a ser datos.
  */
 
-import {
-  type Categoria,
-  type Plataforma,
-  denominadorEngagement,
-  tieneAlcance,
-} from "./plataformas";
+import { type Categoria } from "./categorias";
+import { type Cuenta, denominadorEngagementRed, type Red, tieneAlcanceRed } from "./redes";
 
 /** Fila de registro tal como se necesita para calcular. */
 export interface FilaCalculo {
-  plataforma: Plataforma;
+  cuentaId: string;
+  /** La red de la cuenta: de ella dependen las reglas, no del nombre. */
+  red: Red;
   categoria: Categoria | null;
   publicaciones: number;
   alcance: number | null;
@@ -88,11 +90,8 @@ export function totalPublicaciones(filas: readonly FilaCalculo[]): number {
  * igual y el delta entre ambos es una comparación legítima. (El Excel promediaba
  * razones en la base y dividía promedios en el día: dos cosas distintas.)
  */
-export function engagement(
-  filas: readonly FilaCalculo[],
-  plataforma: Plataforma,
-): number | null {
-  const clave = denominadorEngagement(plataforma);
+export function engagement(filas: readonly FilaCalculo[], red: Red): number | null {
+  const clave = denominadorEngagementRed(red);
   let interacciones = 0;
   let denominador = 0;
   let hubo = false;
@@ -113,8 +112,8 @@ export function engagement(
  *
  *     delta = (promedio_dia - promedio_base) / promedio_base
  *
- * §4.1 — si no hay línea base para esa combinación de plataforma y categoría,
- * devuelve null y la interfaz muestra un guion. NUNCA 0%.
+ * §4.1 — si no hay línea base para esa combinación, devuelve null y la interfaz
+ * muestra un guion. NUNCA 0%.
  */
 export function delta(
   valorDia: number | null | undefined,
@@ -150,24 +149,24 @@ export function pctNoSeguidores(
 /* ------------------------------------------------------------------ */
 
 /**
- * §9.2 — el TOTAL de una plataforma se calcula sobre TODAS sus filas de la
- * fecha, sin filtrar por categoría. No se suman las categorías entre sí porque
- * en Instagram una publicación aparece tanto en Reactivo/Normal como en
+ * §9.2 — el TOTAL de una cuenta se calcula sobre TODAS sus filas de la fecha,
+ * sin filtrar por categoría. No se suman las categorías entre sí porque en
+ * Instagram una publicación aparece tanto en Reactivo/Normal como en
  * Imagen/Reel/Carrusel y se contaría dos veces (§3.2).
  */
-export function filasDeTotal(
+export function filasDeCuenta(
   filas: readonly FilaCalculo[],
-  plataforma: Plataforma,
+  cuentaId: string,
 ): FilaCalculo[] {
-  return filas.filter((f) => f.plataforma === plataforma);
+  return filas.filter((f) => f.cuentaId === cuentaId);
 }
 
 export function filasDeCategoria(
   filas: readonly FilaCalculo[],
-  plataforma: Plataforma,
+  cuentaId: string,
   categoria: Categoria,
 ): FilaCalculo[] {
-  return filas.filter((f) => f.plataforma === plataforma && f.categoria === categoria);
+  return filas.filter((f) => f.cuentaId === cuentaId && f.categoria === categoria);
 }
 
 /* ------------------------------------------------------------------ */
@@ -185,8 +184,8 @@ export interface PromediosBase {
 }
 
 export interface LineaPanel {
-  plataforma: Plataforma;
-  /** null = fila TOTAL de la plataforma. */
+  cuenta: Cuenta;
+  /** null = fila TOTAL de la cuenta. */
   categoria: Categoria | null;
   etiqueta: string;
   publicaciones: number;
@@ -207,31 +206,31 @@ export interface LineaPanel {
     nuevos_seguidores: number | null;
     engagement: number | null;
   };
-  /** §9.6 — el engagement de YouTube no es comparable con el de otras plataformas. */
+  /** §9.6 — el engagement de YouTube no es comparable con el de otras redes. */
   engagementNoComparable: boolean;
 }
 
 export function construirLinea(
   filas: readonly FilaCalculo[],
-  plataforma: Plataforma,
+  cuenta: Cuenta,
   categoria: Categoria | null,
   base: PromediosBase | null,
 ): LineaPanel {
   const seleccion =
     categoria === null
-      ? filasDeTotal(filas, plataforma)
-      : filasDeCategoria(filas, plataforma, categoria);
+      ? filasDeCuenta(filas, cuenta.id)
+      : filasDeCategoria(filas, cuenta.id, categoria);
 
   const dia = {
     alcance: promedioPorPublicacion(seleccion, "alcance"),
     visualizaciones: promedioPorPublicacion(seleccion, "visualizaciones"),
     interacciones: promedioPorPublicacion(seleccion, "interacciones"),
     nuevos_seguidores: promedioPorPublicacion(seleccion, "nuevos_seguidores"),
-    engagement: engagement(seleccion, plataforma),
+    engagement: engagement(seleccion, cuenta.red),
   };
 
   return {
-    plataforma,
+    cuenta,
     categoria,
     etiqueta: categoria ?? "TOTAL",
     publicaciones: totalPublicaciones(seleccion),
@@ -245,7 +244,7 @@ export function construirLinea(
       nuevos_seguidores: delta(dia.nuevos_seguidores, base?.nuevos_seguidores_prom),
       engagement: delta(dia.engagement, base?.engagement_prom),
     },
-    engagementNoComparable: !tieneAlcance(plataforma),
+    engagementNoComparable: !tieneAlcanceRed(cuenta.red),
   };
 }
 
@@ -254,7 +253,9 @@ export function construirLinea(
 /* ------------------------------------------------------------------ */
 
 export interface LineaPerfil {
-  plataforma: Plataforma | "TOTAL";
+  /** null = fila TOTAL de todas las cuentas. */
+  cuenta: Cuenta | null;
+  etiqueta: string;
   publicaciones: number;
   visitas_perfil: number | null;
   vistas_seguidores: number | null;
@@ -270,17 +271,17 @@ export interface LineaPerfil {
  */
 export function construirLineaPerfil(
   filas: readonly FilaCalculo[],
-  plataforma: Plataforma | "TOTAL",
+  cuenta: Cuenta | null,
 ): LineaPerfil {
-  const seleccion =
-    plataforma === "TOTAL" ? [...filas] : filasDeTotal(filas, plataforma);
+  const seleccion = cuenta === null ? [...filas] : filasDeCuenta(filas, cuenta.id);
 
   const visitas = promedioPorPublicacion(seleccion, "visitas_perfil");
   const seguidores = promedioPorPublicacion(seleccion, "vistas_seguidores");
   const noSeguidores = promedioPorPublicacion(seleccion, "vistas_no_seguidores");
 
   return {
-    plataforma,
+    cuenta,
+    etiqueta: cuenta?.nombre ?? "TOTAL",
     publicaciones: totalPublicaciones(seleccion),
     visitas_perfil: visitas,
     vistas_seguidores: seguidores,

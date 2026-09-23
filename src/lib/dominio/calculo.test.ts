@@ -8,11 +8,32 @@ import {
   pctNoSeguidores,
   promedioPorPublicacion,
 } from "./calculo";
-import { esCategoriaValida } from "./plataformas";
+import { type Cuenta, esCategoriaValidaEnRed, type Red } from "./redes";
 
-function fila(p: Partial<FilaCalculo>): FilaCalculo {
+/** Cuentas de prueba, con id estable para poder agrupar. */
+function cuenta(nombre: string, red: Red, extra: Partial<Cuenta> = {}): Cuenta {
   return {
-    plataforma: "Instagram DLT",
+    id: `id-${nombre}`,
+    nombre,
+    usuario: null,
+    red,
+    es_influencer: false,
+    activa: true,
+    orden: 1,
+    ...extra,
+  };
+}
+
+const DLT = cuenta("Instagram DLT", "Instagram");
+const DBF = cuenta("Instagram DBF", "Instagram");
+const TIKTOK = cuenta("TikTok", "TikTok");
+const YT = cuenta("YouTube", "YouTube");
+const DIEGOAT = cuenta("DiegoAT", "Instagram", { es_influencer: true });
+
+function fila(c: Cuenta, p: Partial<FilaCalculo> = {}): FilaCalculo {
+  return {
+    cuentaId: c.id,
+    red: c.red,
     categoria: null,
     publicaciones: 1,
     alcance: null,
@@ -29,10 +50,10 @@ function fila(p: Partial<FilaCalculo>): FilaCalculo {
 describe("§9.1 — los valores del día son promedios por publicación, nunca sumas", () => {
   it("divide la suma de la métrica por la suma de publicaciones", () => {
     const filas = [
-      fila({ publicaciones: 2, alcance: 20_000 }),
-      fila({ publicaciones: 3, alcance: 30_000 }),
+      fila(DLT, { publicaciones: 2, alcance: 20_000 }),
+      fila(DLT, { publicaciones: 3, alcance: 30_000 }),
     ];
-    // 50.000 / 5 publicaciones = 10.000, no 25.000 (promedio de filas) ni 50.000 (suma)
+    // 50.000 / 5 publicaciones = 10.000, no 25.000 ni 50.000
     expect(promedioPorPublicacion(filas, "alcance")).toBe(10_000);
   });
 
@@ -41,7 +62,7 @@ describe("§9.1 — los valores del día son promedios por publicación, nunca s
     const publicaciones = 14;
     const sumaDelDia = 672_933.8;
 
-    const filas = [fila({ publicaciones, alcance: sumaDelDia })];
+    const filas = [fila(DLT, { publicaciones, alcance: sumaDelDia })];
     const promDia = promedioPorPublicacion(filas, "alcance")!;
 
     const correcto = delta(promDia, baseProm)!;
@@ -49,29 +70,30 @@ describe("§9.1 — los valores del día son promedios por publicación, nunca s
 
     expect(correcto).toBeCloseTo(-0.315, 3); // -31,5% — el valor real
     expect(bugDelExcel).toBeCloseTo(8.59, 2); // +859% — lo que mostraba el Excel
-    // El factor de inflado es exactamente el número de publicaciones.
     expect((1 + bugDelExcel) / (1 + correcto)).toBeCloseTo(publicaciones, 6);
   });
 });
 
 describe("§9.4 — sin dato no es cero", () => {
   it("una métrica ausente devuelve null, no 0", () => {
-    const filas = [fila({ publicaciones: 3, alcance: 9_000 })];
-    expect(promedioPorPublicacion(filas, "nuevos_seguidores")).toBeNull();
+    expect(
+      promedioPorPublicacion([fila(DLT, { publicaciones: 3, alcance: 9_000 })], "nuevos_seguidores"),
+    ).toBeNull();
   });
 
   it("las filas sin la métrica no diluyen el denominador", () => {
     const filas = [
-      fila({ publicaciones: 2, alcance: 20_000 }),
-      fila({ publicaciones: 8, alcance: null }), // no reportó alcance
+      fila(DLT, { publicaciones: 2, alcance: 20_000 }),
+      fila(DLT, { publicaciones: 8, alcance: null }),
     ];
-    // 20.000 / 2 = 10.000. Si contáramos las 8 publicaciones sin dato: 2.000.
+    // 20.000 / 2 = 10.000. Contando las 8 sin dato daría 2.000.
     expect(promedioPorPublicacion(filas, "alcance")).toBe(10_000);
   });
 
   it("un cero real sí cuenta como dato", () => {
-    const filas = [fila({ publicaciones: 4, nuevos_seguidores: 0 })];
-    expect(promedioPorPublicacion(filas, "nuevos_seguidores")).toBe(0);
+    expect(
+      promedioPorPublicacion([fila(DLT, { publicaciones: 4, nuevos_seguidores: 0 })], "nuevos_seguidores"),
+    ).toBe(0);
   });
 });
 
@@ -92,40 +114,47 @@ describe("§4.1 / §4.2 — deltas", () => {
 
 describe("§9.2 — el TOTAL no se calcula sumando categorías", () => {
   const filas: FilaCalculo[] = [
-    fila({ plataforma: "Instagram DLT", categoria: "Reactivo", publicaciones: 2, alcance: 200_000 }),
-    fila({ plataforma: "Instagram DLT", categoria: "Normal", publicaciones: 3, alcance: 150_000 }),
-    fila({ plataforma: "Instagram DLT", categoria: "Reel", publicaciones: 5, alcance: 400_000 }),
-    fila({ plataforma: "TikTok", categoria: null, publicaciones: 4, alcance: 800_000 }),
+    fila(DLT, { categoria: "Reactivo", publicaciones: 2, alcance: 200_000 }),
+    fila(DLT, { categoria: "Normal", publicaciones: 3, alcance: 150_000 }),
+    fila(DLT, { categoria: "Reel", publicaciones: 5, alcance: 400_000 }),
+    fila(TIKTOK, { categoria: "Video", publicaciones: 4, alcance: 800_000 }),
   ];
 
-  it("toma todas las filas de la plataforma sin filtrar por categoría", () => {
-    const total = construirLinea(filas, "Instagram DLT", null, null);
+  it("toma todas las filas de la cuenta sin filtrar por categoría", () => {
+    const total = construirLinea(filas, DLT, null, null);
     expect(total.publicaciones).toBe(10);
     expect(total.dia.alcance).toBe(75_000); // 750.000 / 10
   });
 
-  it("no mezcla plataformas", () => {
-    const tiktok = construirLinea(filas, "TikTok", null, null);
+  it("no mezcla cuentas", () => {
+    const tiktok = construirLinea(filas, TIKTOK, null, null);
     expect(tiktok.publicaciones).toBe(4);
     expect(tiktok.dia.alcance).toBe(200_000);
   });
 
   it("sumar las categorías da un resultado distinto (y equivocado)", () => {
-    const reactivo = construirLinea(filas, "Instagram DLT", "Reactivo", null);
-    const normal = construirLinea(filas, "Instagram DLT", "Normal", null);
-    const reel = construirLinea(filas, "Instagram DLT", "Reel", null);
-    const sumaDeCategorias =
-      reactivo.dia.alcance! + normal.dia.alcance! + reel.dia.alcance!;
-    const total = construirLinea(filas, "Instagram DLT", null, null);
-    expect(sumaDeCategorias).not.toBeCloseTo(total.dia.alcance!, 5);
+    const suma =
+      construirLinea(filas, DLT, "Reactivo", null).dia.alcance! +
+      construirLinea(filas, DLT, "Normal", null).dia.alcance! +
+      construirLinea(filas, DLT, "Reel", null).dia.alcance!;
+    expect(suma).not.toBeCloseTo(construirLinea(filas, DLT, null, null).dia.alcance!, 5);
+  });
+
+  it("dos cuentas de la misma red no se mezclan entre sí", () => {
+    // El caso nuevo: DiegoAT también es Instagram, pero es otra cuenta.
+    const mixtas = [
+      fila(DLT, { publicaciones: 1, alcance: 100_000 }),
+      fila(DIEGOAT, { publicaciones: 1, alcance: 10_000 }),
+    ];
+    expect(construirLinea(mixtas, DLT, null, null).dia.alcance).toBe(100_000);
+    expect(construirLinea(mixtas, DIEGOAT, null, null).dia.alcance).toBe(10_000);
   });
 });
 
 describe("§9.6 — YouTube no tiene alcance", () => {
   it("calcula el engagement sobre visualizaciones", () => {
     const filas = [
-      fila({
-        plataforma: "YouTube",
+      fila(YT, {
         categoria: "Short",
         publicaciones: 1,
         alcance: null,
@@ -137,74 +166,80 @@ describe("§9.6 — YouTube no tiene alcance", () => {
   });
 
   it("marca el engagement de YouTube como no comparable", () => {
-    const yt = construirLinea([], "YouTube", null, null);
-    const ig = construirLinea([], "Instagram DLT", null, null);
-    expect(yt.engagementNoComparable).toBe(true);
-    expect(ig.engagementNoComparable).toBe(false);
+    expect(construirLinea([], YT, null, null).engagementNoComparable).toBe(true);
+    expect(construirLinea([], DLT, null, null).engagementNoComparable).toBe(false);
   });
 
-  it("en el resto de plataformas usa alcance", () => {
+  it("en el resto de las redes usa alcance", () => {
     const filas = [
-      fila({ publicaciones: 1, alcance: 179_892, visualizaciones: 259_088, interacciones: 12_499 }),
+      fila(DBF, { publicaciones: 1, alcance: 179_892, visualizaciones: 259_088, interacciones: 12_499 }),
     ];
     // Fila real de DBF del 01-08-2026: engagement del Excel = 0,06948057724
-    expect(engagement(filas, "Instagram DLT")).toBeCloseTo(0.06948057724, 9);
+    expect(engagement(filas, "Instagram")).toBeCloseTo(0.06948057724, 9);
   });
 });
 
 describe("engagement como razón de sumas", () => {
   it("no es el promedio de las razones por fila", () => {
     const filas = [
-      fila({ publicaciones: 1, alcance: 1_000, interacciones: 100 }), // 10%
-      fila({ publicaciones: 1, alcance: 9_000, interacciones: 180 }), // 2%
+      fila(DLT, { publicaciones: 1, alcance: 1_000, interacciones: 100 }), // 10%
+      fila(DLT, { publicaciones: 1, alcance: 9_000, interacciones: 180 }), // 2%
     ];
-    expect(engagement(filas, "Instagram DLT")).toBeCloseTo(280 / 10_000, 10); // 2,8%
+    expect(engagement(filas, "Instagram")).toBeCloseTo(280 / 10_000, 10); // 2,8%
     // El promedio de razones daría 6% y sobrerrepresentaría a la publicación chica.
   });
 });
 
-describe("§9.3 — categorías válidas por plataforma", () => {
-  it("acepta las categorías de cada plataforma", () => {
-    expect(esCategoriaValida("Instagram DLT", "Carrusel")).toBe(true);
-    expect(esCategoriaValida("YouTube", "Short")).toBe(true);
-    expect(esCategoriaValida("Twitter/X", "Foto")).toBe(true);
-    expect(esCategoriaValida("TikTok", "Video")).toBe(true); // única de TikTok
+describe("§9.3 — categorías válidas por red", () => {
+  it("acepta las de cada red", () => {
+    expect(esCategoriaValidaEnRed("Instagram", "Carrusel")).toBe(true);
+    expect(esCategoriaValidaEnRed("YouTube", "Short")).toBe(true);
+    expect(esCategoriaValidaEnRed("Twitter/X", "Foto")).toBe(true);
+    expect(esCategoriaValidaEnRed("TikTok", "Video")).toBe(true);
   });
 
   it("rechaza las que no corresponden", () => {
-    expect(esCategoriaValida("YouTube", "Reel")).toBe(false);
-    expect(esCategoriaValida("TikTok", "Reactivo")).toBe(false);
-    expect(esCategoriaValida("TikTok", "Carrusel")).toBe(false);
-    expect(esCategoriaValida("Twitter/X", "Short")).toBe(false);
+    expect(esCategoriaValidaEnRed("YouTube", "Reel")).toBe(false);
+    expect(esCategoriaValidaEnRed("TikTok", "Reel")).toBe(false);
+    expect(esCategoriaValidaEnRed("Twitter/X", "Short")).toBe(false);
   });
 
-  it("null siempre es válido: es la fila TOTAL de cada plataforma", () => {
-    expect(esCategoriaValida("TikTok", null)).toBe(true);
-    expect(esCategoriaValida("Instagram DLT", null)).toBe(true);
+  it("null siempre es válido: sin categoría y la fila TOTAL", () => {
+    expect(esCategoriaValidaEnRed("TikTok", null)).toBe(true);
   });
 });
 
 describe("§4.3 — métricas de perfil", () => {
   it("promedia por publicación y calcula el % de no seguidores", () => {
     const filas = [
-      fila({
-        plataforma: "Instagram DLT",
+      fila(DLT, {
         publicaciones: 2,
         visitas_perfil: 400,
         vistas_seguidores: 20_000,
         vistas_no_seguidores: 60_000,
       }),
     ];
-    const linea = construirLineaPerfil(filas, "Instagram DLT");
+    const linea = construirLineaPerfil(filas, DLT);
     expect(linea.visitas_perfil).toBe(200);
     expect(linea.vistas_seguidores).toBe(10_000);
     expect(linea.vistas_no_seguidores).toBe(30_000);
     expect(linea.pct_no_seguidores).toBeCloseTo(0.75, 10);
   });
 
+  it("con cuenta null agrega todas las cuentas", () => {
+    const filas = [
+      fila(DLT, { publicaciones: 1, vistas_seguidores: 10_000, vistas_no_seguidores: 30_000 }),
+      fila(TIKTOK, { publicaciones: 1, vistas_seguidores: 2_000, vistas_no_seguidores: 2_000 }),
+    ];
+    const total = construirLineaPerfil(filas, null);
+    expect(total.etiqueta).toBe("TOTAL");
+    expect(total.vistas_seguidores).toBe(6_000);
+  });
+
   it("marca sinDatos cuando no se ingresó nada a mano", () => {
-    const filas = [fila({ publicaciones: 3, alcance: 30_000 })];
-    expect(construirLineaPerfil(filas, "Instagram DLT").sinDatos).toBe(true);
+    expect(construirLineaPerfil([fila(DLT, { publicaciones: 3, alcance: 30_000 })], DLT).sinDatos).toBe(
+      true,
+    );
   });
 
   it("el % de no seguidores es null si falta una de las dos vistas", () => {
@@ -216,7 +251,7 @@ describe("§4.3 — métricas de perfil", () => {
 
 describe("estados vacíos", () => {
   it("un día sin filas devuelve sinDatos y todo en null", () => {
-    const linea = construirLinea([], "Instagram DBF", null, {
+    const linea = construirLinea([], DBF, null, {
       n_publicaciones: 35,
       alcance_prom: 39_128,
       visualizaciones_prom: 60_359,

@@ -11,13 +11,15 @@ import {
   promedioPorPublicacion,
   type PromediosBase,
 } from "@/lib/dominio/calculo";
+import { type Categoria } from "@/lib/dominio/categorias";
+import type { Plataforma } from "@/lib/dominio/plataformas";
 import {
-  type Categoria,
-  categoriasDe,
-  ORDEN_PLATAFORMAS,
-  type Plataforma,
-} from "@/lib/dominio/plataformas";
-import { ordenarCuentas } from "@/lib/dominio/redes";
+  categoriasDeCuenta,
+  type Cuenta,
+  ordenarCuentas,
+  type Red,
+  REDES,
+} from "@/lib/dominio/redes";
 import { supabaseServidor } from "@/lib/supabase/servidor";
 import type {
   CuentaRow,
@@ -29,10 +31,10 @@ import type {
 } from "@/lib/supabase/tipos-db";
 
 const SELECT_REGISTRO = `
-  id, fecha, plataforma, categoria, publicaciones,
+  id, fecha, cuenta_id, plataforma, categoria, publicaciones,
   alcance, visualizaciones, interacciones, nuevos_seguidores,
   visitas_perfil, vistas_seguidores, vistas_no_seguidores,
-  titulo_contenido, enlace,
+  titulo_contenido, enlace, hashtag, publicado_en, id_externo, fuente,
   created_by, created_at, updated_at,
   autor:perfiles!registros_created_by_fkey ( id, nombre, email )
 `;
@@ -40,9 +42,14 @@ const SELECT_REGISTRO = `
 export interface FiltrosRegistro {
   desde?: string;
   hasta?: string;
+  cuentaId?: string;
+  /** Heredado: filtra por la columna vieja. Lo usa la vista de registro
+   *  mientras su formulario sigue trabajando por plataforma. */
   plataforma?: Plataforma;
   categoria?: Categoria;
   usuario?: string;
+  /** Serie o hashtag, ya normalizado. */
+  hashtag?: string;
 }
 
 export async function listarRegistros(
@@ -53,9 +60,11 @@ export async function listarRegistros(
 
   if (filtros.desde) q = q.gte("fecha", filtros.desde);
   if (filtros.hasta) q = q.lte("fecha", filtros.hasta);
+  if (filtros.cuentaId) q = q.eq("cuenta_id", filtros.cuentaId);
   if (filtros.plataforma) q = q.eq("plataforma", filtros.plataforma);
   if (filtros.categoria) q = q.eq("categoria", filtros.categoria);
   if (filtros.usuario) q = q.eq("created_by", filtros.usuario);
+  if (filtros.hashtag) q = q.eq("hashtag", filtros.hashtag);
 
   const { data, error } = await q
     .order("fecha", { ascending: false })
@@ -95,8 +104,8 @@ export async function lineaBaseActiva(): Promise<LineaBaseRow | null> {
 }
 
 /** Clave estable para el mapa de promedios: la fila TOTAL es `categoria = null`. */
-export function claveBase(plataforma: Plataforma, categoria: Categoria | null): string {
-  return `${plataforma}|${categoria ?? "TOTAL"}`;
+export function claveBase(cuentaId: string, categoria: Categoria | null): string {
+  return `${cuentaId}|${categoria ?? "TOTAL"}`;
 }
 
 export type MapaBase = Map<string, PromediosBase>;
@@ -112,7 +121,7 @@ export async function promediosDeLineaBase(lineaBaseId: string): Promise<MapaBas
 
   const mapa: MapaBase = new Map();
   for (const fila of (data ?? []) as LineaBaseDetalleRow[]) {
-    mapa.set(claveBase(fila.plataforma, fila.categoria), {
+    mapa.set(claveBase(fila.cuenta_id, fila.categoria), {
       n_publicaciones: fila.n_publicaciones,
       alcance_prom: fila.alcance_prom,
       visualizaciones_prom: fila.visualizaciones_prom,
@@ -126,14 +135,14 @@ export async function promediosDeLineaBase(lineaBaseId: string): Promise<MapaBas
 
 export async function publicacionesDeLineaBase(
   lineaBaseId: string,
-  plataforma?: Plataforma,
+  cuentaId?: string,
 ): Promise<PublicacionBaseRow[]> {
   const supabase = await supabaseServidor();
   let q = supabase
     .from("publicaciones_base")
     .select("*")
     .eq("linea_base_id", lineaBaseId);
-  if (plataforma) q = q.eq("plataforma", plataforma);
+  if (cuentaId) q = q.eq("cuenta_id", cuentaId);
 
   const { data, error } = await q
     .order("publicado_en", { ascending: false })
@@ -146,25 +155,32 @@ export async function publicacionesDeLineaBase(
 /* Panel diario (§4.2)                                                 */
 /* ------------------------------------------------------------------ */
 
-export interface BloquePlataforma {
-  plataforma: Plataforma;
+export interface BloqueCuenta {
+  cuenta: CuentaRow;
   total: LineaPanel;
   categorias: LineaPanel[];
-  /** true si no hay ninguna fila registrada para esa plataforma ese día. */
+  /** true si no hay ninguna fila registrada para esa cuenta ese día. */
   sinDatos: boolean;
 }
 
 export interface PanelDiario {
   fecha: string;
   base: LineaBaseRow | null;
-  bloques: BloquePlataforma[];
+  bloques: BloqueCuenta[];
   perfil: LineaPerfil[];
   hayAlgo: boolean;
 }
 
-export function aFilaCalculo(r: RegistroConAutor): FilaCalculo {
+/** Índice de cuentas por id, para resolver la cuenta de cada fila. */
+export function cuentasPorId(cuentas: readonly CuentaRow[]): Map<string, CuentaRow> {
+  return new Map(cuentas.map((c) => [c.id, c]));
+}
+
+export function aFilaCalculo(r: RegistroConAutor, cuenta: Cuenta): FilaCalculo {
   return {
-    plataforma: r.plataforma,
+    cuentaId: cuenta.id,
+    // Las reglas dependen de la red de la cuenta, no del nombre de la fila.
+    red: cuenta.red,
     categoria: r.categoria,
     publicaciones: r.publicaciones,
     alcance: r.alcance,
@@ -177,41 +193,55 @@ export function aFilaCalculo(r: RegistroConAutor): FilaCalculo {
   };
 }
 
+export function aFilasCalculo(
+  registros: readonly RegistroConAutor[],
+  indice: Map<string, CuentaRow>,
+): FilaCalculo[] {
+  // Una fila sin cuenta no debería existir (hay clave foránea), pero si
+  // apareciera, quedarse callado es mejor que caerse: se omite del cálculo.
+  return registros.flatMap((r) => {
+    const cuenta = indice.get(r.cuenta_id);
+    return cuenta ? [aFilaCalculo(r, cuenta)] : [];
+  });
+}
+
 export async function panelDelDia(fecha: string): Promise<PanelDiario> {
-  const [registros, base] = await Promise.all([
+  const [registros, base, cuentas] = await Promise.all([
     registrosDelDia(fecha),
     lineaBaseActiva(),
+    listarCuentas(),
   ]);
 
   const mapa = base ? await promediosDeLineaBase(base.id) : (new Map() as MapaBase);
-  const filas = registros.map(aFilaCalculo);
+  const indice = cuentasPorId(cuentas);
+  const filas = aFilasCalculo(registros, indice);
 
-  const bloques: BloquePlataforma[] = ORDEN_PLATAFORMAS.map((plataforma) => {
-    const propias = filas.filter((f) => f.plataforma === plataforma);
+  /*
+   * Solo las cuentas que tuvieron actividad ese día. Con cinco cuentas fijas
+   * mostrar las vacías tenía sentido; con las de los influencers, la mayoría
+   * no publica todos los días y el panel se llenaría de bloques en blanco
+   * (§8: estados vacíos claros, no tablas de ceros).
+   */
+  const conActividad = cuentas.filter((c) => filas.some((f) => f.cuentaId === c.id));
 
-    // §9.2: el TOTAL sale de todas las filas de la plataforma, sin filtrar.
-    const total = construirLinea(
-      filas,
-      plataforma,
-      null,
-      mapa.get(claveBase(plataforma, null)) ?? null,
-    );
-
-    const categorias = categoriasDe(plataforma).map((categoria) =>
+  const bloques: BloqueCuenta[] = conActividad.map((cuenta) => ({
+    cuenta,
+    // §9.2: el TOTAL sale de todas las filas de la cuenta, sin filtrar.
+    total: construirLinea(filas, cuenta, null, mapa.get(claveBase(cuenta.id, null)) ?? null),
+    categorias: categoriasDeCuenta(cuenta).map((categoria) =>
       construirLinea(
         filas,
-        plataforma,
+        cuenta,
         categoria,
-        mapa.get(claveBase(plataforma, categoria)) ?? null,
+        mapa.get(claveBase(cuenta.id, categoria)) ?? null,
       ),
-    );
-
-    return { plataforma, total, categorias, sinDatos: propias.length === 0 };
-  });
+    ),
+    sinDatos: false,
+  }));
 
   const perfil: LineaPerfil[] = [
-    ...ORDEN_PLATAFORMAS.map((p) => construirLineaPerfil(filas, p)),
-    construirLineaPerfil(filas, "TOTAL"),
+    ...conActividad.map((c) => construirLineaPerfil(filas, c)),
+    construirLineaPerfil(filas, null),
   ];
 
   return {
@@ -250,8 +280,10 @@ export async function listarPerfiles() {
 /* Resumen de una línea base, por plataforma                           */
 /* ------------------------------------------------------------------ */
 
-export interface ResumenPlataformaBase {
-  plataforma: Plataforma;
+export interface ResumenCuentaBase {
+  cuenta_id: string;
+  cuenta: string;
+  red: Red;
   n_publicaciones: number;
   alcance_prom: number | null;
   visualizaciones_prom: number | null;
@@ -261,12 +293,15 @@ export interface ResumenPlataformaBase {
 }
 
 /**
- * Filas TOTAL (categoria is null) de cada plataforma: sirve para mostrar de un
+ * Filas TOTAL (categoria is null) de cada cuenta: sirve para mostrar de un
  * vistazo qué trae una línea base sin cargar las publicaciones una por una.
+ *
+ * El nombre y la red vienen en la vista, así que no hace falta consultar la
+ * tabla de cuentas.
  */
 export async function resumenLineaBase(
   lineaBaseId: string,
-): Promise<ResumenPlataformaBase[]> {
+): Promise<ResumenCuentaBase[]> {
   const supabase = await supabaseServidor();
   const { data, error } = await supabase
     .from("lineas_base_detalle")
@@ -276,23 +311,23 @@ export async function resumenLineaBase(
 
   if (error) throw new Error(`No pude leer el resumen: ${error.message}`);
 
-  const filas = (data ?? []) as LineaBaseDetalleRow[];
-  return ORDEN_PLATAFORMAS.flatMap((plataforma) => {
-    const f = filas.find((x) => x.plataforma === plataforma);
-    return f
-      ? [
-          {
-            plataforma,
-            n_publicaciones: f.n_publicaciones,
-            alcance_prom: f.alcance_prom,
-            visualizaciones_prom: f.visualizaciones_prom,
-            interacciones_prom: f.interacciones_prom,
-            nuevos_seguidores_prom: f.nuevos_seguidores_prom,
-            engagement_prom: f.engagement_prom,
-          },
-        ]
-      : [];
-  });
+  return ((data ?? []) as LineaBaseDetalleRow[])
+    .map((f) => ({
+      cuenta_id: f.cuenta_id,
+      cuenta: f.cuenta,
+      red: f.red,
+      n_publicaciones: f.n_publicaciones,
+      alcance_prom: f.alcance_prom,
+      visualizaciones_prom: f.visualizaciones_prom,
+      interacciones_prom: f.interacciones_prom,
+      nuevos_seguidores_prom: f.nuevos_seguidores_prom,
+      engagement_prom: f.engagement_prom,
+    }))
+    .sort(
+      (a, b) =>
+        REDES.indexOf(a.red) - REDES.indexOf(b.red) ||
+        a.cuenta.localeCompare(b.cuenta, "es"),
+    );
 }
 
 /** Detalle completo por categoría, para la vista de una línea base. */
@@ -410,12 +445,14 @@ export async function historicoPorDia(
   desde: string,
   hasta: string,
 ): Promise<{ dias: DiaHistorico[]; base: LineaBaseRow | null }> {
-  const [registros, base] = await Promise.all([
+  const [registros, base, cuentas] = await Promise.all([
     listarRegistros({ desde, hasta }),
     lineaBaseActiva(),
+    listarCuentas(),
   ]);
 
   const mapa = base ? await promediosDeLineaBase(base.id) : (new Map() as MapaBase);
+  const indice = cuentasPorId(cuentas);
 
   const porFecha = new Map<string, RegistroConAutor[]>();
   for (const r of registros) {
@@ -427,22 +464,22 @@ export async function historicoPorDia(
   const dias: DiaHistorico[] = [...porFecha.entries()]
     .sort(([a], [b]) => b.localeCompare(a))
     .map(([fecha, delDia]) => {
-      const filas = delDia.map(aFilaCalculo);
+      const filas = aFilasCalculo(delDia, indice);
 
-      // Solo las plataformas que tuvieron actividad: §8, nada de filas de ceros.
-      const bloques = ORDEN_PLATAFORMAS.filter((p) =>
-        filas.some((f) => f.plataforma === p),
-      ).map((plataforma) => ({
-        linea: construirLinea(
-          filas,
-          plataforma,
-          null,
-          mapa.get(claveBase(plataforma, null)) ?? null,
-        ),
-        detalle: delDia
-          .filter((r) => r.plataforma === plataforma)
-          .map((r) => detalleDeFila(r, mapa)),
-      }));
+      // Solo las cuentas que tuvieron actividad: §8, nada de filas de ceros.
+      const bloques = cuentas
+        .filter((c) => filas.some((f) => f.cuentaId === c.id))
+        .map((cuenta) => ({
+          linea: construirLinea(
+            filas,
+            cuenta,
+            null,
+            mapa.get(claveBase(cuenta.id, null)) ?? null,
+          ),
+          detalle: delDia
+            .filter((r) => r.cuenta_id === cuenta.id)
+            .map((r) => detalleDeFila(r, cuenta, mapa)),
+        }));
 
       return {
         fecha,
@@ -465,17 +502,20 @@ export async function historicoPorDia(
  * 30.000 de alcance vale 10.000 por publicación, no 30.000. Compararla contra
  * el promedio de la línea base sin dividir sería el mismo error del +859%.
  */
-function detalleDeFila(r: RegistroConAutor, mapa: MapaBase): DetalleFila {
-  const calc = aFilaCalculo(r);
-  const uno = [calc];
-  const b = mapa.get(claveBase(r.plataforma, r.categoria)) ?? null;
+function detalleDeFila(
+  r: RegistroConAutor,
+  cuenta: Cuenta,
+  mapa: MapaBase,
+): DetalleFila {
+  const uno = [aFilaCalculo(r, cuenta)];
+  const b = mapa.get(claveBase(cuenta.id, r.categoria)) ?? null;
 
   const porPublicacion = {
     alcance: promedioPorPublicacion(uno, "alcance"),
     visualizaciones: promedioPorPublicacion(uno, "visualizaciones"),
     interacciones: promedioPorPublicacion(uno, "interacciones"),
     nuevos_seguidores: promedioPorPublicacion(uno, "nuevos_seguidores"),
-    engagement: engagement(uno, r.plataforma),
+    engagement: engagement(uno, cuenta.red),
   };
 
   return {

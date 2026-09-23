@@ -4,6 +4,8 @@ import { VistaPreviaReporte } from "@/componentes/VistaPreviaReporte";
 import { Nota } from "@/componentes/ui";
 import {
   claveBase,
+  cuentasPorId,
+  listarCuentas,
   panelDelDia,
   promediosDeLineaBase,
   registrosDelDia,
@@ -32,21 +34,27 @@ export default async function PaginaReporte(props: PageProps<"/reporte">) {
   const sp = await props.searchParams;
   const fecha = primero(sp.fecha) ?? hoyISO();
 
-  const [panel, registros, textos] = await Promise.all([
+  const [panel, registros, textos, cuentas] = await Promise.all([
     panelDelDia(fecha),
     registrosDelDia(fecha),
     reporteDe(fecha),
+    listarCuentas(),
   ]);
+
+  const indice = cuentasPorId(cuentas);
 
   const mapa: MapaBase = panel.base
     ? await promediosDeLineaBase(panel.base.id)
     : new Map();
 
-  const filas: FilaConDeltas[] = registros.map((r) => {
-    const uno = [aFilaCalculo(r)];
-    const b = mapa.get(claveBase(r.plataforma, r.categoria)) ?? null;
-    return {
+  const filas: FilaConDeltas[] = registros.flatMap((r) => {
+    const cuenta = indice.get(r.cuenta_id);
+    if (!cuenta) return [];
+    const uno = [aFilaCalculo(r, cuenta)];
+    const b = mapa.get(claveBase(cuenta.id, r.categoria)) ?? null;
+    return [{
       registro: r,
+      cuenta: cuenta.nombre,
       deltas: {
         alcance: delta(promedioPorPublicacion(uno, "alcance"), b?.alcance_prom),
         visualizaciones: delta(
@@ -62,7 +70,7 @@ export default async function PaginaReporte(props: PageProps<"/reporte">) {
           b?.nuevos_seguidores_prom,
         ),
       },
-    };
+    }];
   });
 
   const reporte = construirReporte(panel, filas, textos);

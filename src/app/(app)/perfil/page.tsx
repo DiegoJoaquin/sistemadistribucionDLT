@@ -65,10 +65,10 @@ export default async function PaginaPerfil(props: PageProps<"/perfil">) {
               </thead>
               <tbody>
                 {panel.perfil.map((l) => {
-                  const esTotal = l.plataforma === "TOTAL";
+                  const esTotal = l.cuenta === null;
                   return (
                     <tr
-                      key={l.plataforma}
+                      key={l.cuenta?.id ?? "total"}
                       className={
                         esTotal
                           ? "border-t border-[var(--color-filete-fuerte)] bg-[var(--color-realce)]/70"
@@ -76,7 +76,7 @@ export default async function PaginaPerfil(props: PageProps<"/perfil">) {
                       }
                     >
                       <td className={`td ${esTotal ? "font-semibold" : "font-medium"}`}>
-                        {l.plataforma}
+                        {l.etiqueta}
                       </td>
                       <td className="td text-right">
                         {l.publicaciones === 0 ? (
