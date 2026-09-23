@@ -31,7 +31,7 @@ import type {
 } from "@/lib/supabase/tipos-db";
 
 const SELECT_REGISTRO = `
-  id, fecha, cuenta_id, plataforma, categoria, publicaciones,
+  id, fecha, cuenta_id, plataforma, categoria, tipo, publicaciones,
   alcance, visualizaciones, interacciones, nuevos_seguidores,
   visitas_perfil, vistas_seguidores, vistas_no_seguidores,
   titulo_contenido, enlace, hashtag, publicado_en, id_externo, fuente,
@@ -182,6 +182,7 @@ export function aFilaCalculo(r: RegistroConAutor, cuenta: Cuenta): FilaCalculo {
     // Las reglas dependen de la red de la cuenta, no del nombre de la fila.
     red: cuenta.red,
     categoria: r.categoria,
+    tipo: r.tipo,
     publicaciones: r.publicaciones,
     alcance: r.alcance,
     visualizaciones: r.visualizaciones,

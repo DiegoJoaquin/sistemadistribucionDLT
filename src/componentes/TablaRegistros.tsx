@@ -8,10 +8,11 @@ import {
 } from "@/componentes/FormularioEdicionRegistro";
 import { Cifra } from "@/componentes/ui";
 import { fechaCorta, fechaHoraCorta } from "@/lib/dominio/formato";
-import type { RegistroConAutor } from "@/lib/supabase/tipos-db";
+import type { CuentaRow, RegistroConAutor } from "@/lib/supabase/tipos-db";
 
 export interface FilaTabla {
   registro: RegistroConAutor;
+  cuenta: CuentaRow;
   alcancePorPost: number | null;
   deltas: {
     alcance: number | null;
@@ -19,17 +20,20 @@ export interface FilaTabla {
     interacciones: number | null;
     nuevos_seguidores: number | null;
   };
-  /** true si no hay línea base para esa plataforma y categoría. */
+  /** true si no hay línea base para esa cuenta y categoría. */
   sinBase: boolean;
 }
 
-const COLUMNAS = 15;
+const COLUMNAS = 16;
 
 export function TablaRegistros({
   filas,
+  cuentas,
   rango,
 }: {
   filas: FilaTabla[];
+  /** Todas las cuentas: el formulario de edición las necesita para el selector. */
+  cuentas: CuentaRow[];
   /** Rango que está filtrado, para avisar si una edición mueve la fila fuera. */
   rango: { desde: string; hasta: string };
 }) {
@@ -48,14 +52,15 @@ export function TablaRegistros({
           <thead className="border-b border-[var(--color-filete)] bg-[var(--color-realce)]/60">
             <tr>
               <th className="th">Fecha</th>
-              <th className="th">Plataforma</th>
-              <th className="th">Categoría</th>
+              <th className="th">Cuenta</th>
+              <th className="th">Formato</th>
+              <th className="th">Tipo</th>
+              <th className="th">Hashtag</th>
               <th className="th text-right">Pub.</th>
               <th className="th text-right">Alcance</th>
               <th className="th text-right">Visualiz.</th>
               <th className="th text-right">Interacc.</th>
               <th className="th text-right">Seguidores</th>
-              <th className="th text-right">Alcance/post</th>
               <th className="th">Δ Alcance</th>
               <th className="th">Δ Visualiz.</th>
               <th className="th">Δ Interacc.</th>
@@ -74,6 +79,7 @@ export function TablaRegistros({
                   <td colSpan={COLUMNAS} className="p-4">
                     <FormularioEdicionRegistro
                       registro={f.registro}
+                      cuentas={cuentas}
                       onCerrar={() => setEditando(null)}
                       rangoVisible={rangoVisible}
                     />
@@ -102,16 +108,22 @@ function FilaLectura({ fila, onEditar }: { fila: FilaTabla; onEditar: () => void
     r.vistas_no_seguidores !== null;
 
   const tituloDelta = fila.sinBase
-    ? "No hay línea base para esta plataforma y categoría"
+    ? "No hay línea base para esta cuenta y categoría"
     : undefined;
+
+  const vacio = <span className="text-[var(--color-tinta-tenue)]">—</span>;
 
   return (
     <tr className="border-b border-[var(--color-filete)] last:border-0 hover:bg-[var(--color-realce)]/40">
       <td className="td text-[var(--color-tinta-suave)]">{fechaCorta(r.fecha)}</td>
-      <td className="td font-medium">{r.plataforma}</td>
+      <td className="td font-medium">{fila.cuenta.nombre}</td>
+      <td className="td">{r.categoria ?? vacio}</td>
+      <td className="td">{r.tipo ?? vacio}</td>
       <td className="td">
-        {r.categoria ?? (
-          <span className="text-[var(--color-tinta-tenue)]">sin categoría</span>
+        {r.hashtag ? (
+          <span className="text-[13px]">#{r.hashtag}</span>
+        ) : (
+          vacio
         )}
       </td>
       <td className="td text-right font-medium">{r.publicaciones}</td>
@@ -126,9 +138,6 @@ function FilaLectura({ fila, onEditar }: { fila: FilaTabla; onEditar: () => void
       </td>
       <td className="td text-right">
         <Cifra valor={r.nuevos_seguidores} />
-      </td>
-      <td className="td text-right text-[var(--color-tinta-suave)]">
-        <Cifra valor={fila.alcancePorPost} />
       </td>
       <td className="td">
         <Delta valor={fila.deltas.alcance} titulo={tituloDelta} />
@@ -147,6 +156,7 @@ function FilaLectura({ fila, onEditar }: { fila: FilaTabla; onEditar: () => void
           <span className="text-[13px]">{r.autor?.nombre ?? "—"}</span>
           <span className="text-[11px] text-[var(--color-tinta-tenue)]">
             {fechaHoraCorta(r.created_at)}
+            {r.fuente !== "manual" && " · importado"}
             {r.updated_at !== r.created_at && " · editado"}
           </span>
         </div>

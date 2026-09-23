@@ -136,6 +136,7 @@ function fila(c: Cuenta, p: Partial<FilaCalculo> = {}): FilaCalculo {
     cuentaId: c.id,
     red: c.red,
     categoria: null,
+    tipo: null,
     publicaciones: 1,
     alcance: null,
     visualizaciones: null,

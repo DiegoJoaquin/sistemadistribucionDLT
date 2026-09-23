@@ -15,7 +15,14 @@ export interface FilaCalculo {
   cuentaId: string;
   /** La red de la cuenta: de ella dependen las reglas, no del nombre. */
   red: Red;
+  /** El formato: Imagen, Reel, Carrusel, Short, Video, Foto. */
   categoria: Categoria | null;
+  /**
+   * §3.2 — la otra clasificación de Instagram: Reactivo o Normal. Una
+   * publicación puede tener formato Y tipo, y entra en las dos categorías del
+   * panel sin que el TOTAL la cuente dos veces (§9.2).
+   */
+  tipo: Categoria | null;
   publicaciones: number;
   alcance: number | null;
   visualizaciones: number | null;
@@ -161,12 +168,23 @@ export function filasDeCuenta(
   return filas.filter((f) => f.cuentaId === cuentaId);
 }
 
+/**
+ * Filas de una categoría.
+ *
+ * §3.2 — mira las dos clasificaciones: un Reel Reactivo aparece cuando se pide
+ * "Reel" y también cuando se pide "Reactivo". Por eso mismo sumar las
+ * categorías entre sí contaría esa publicación dos veces, y el TOTAL se calcula
+ * aparte sobre todas las filas de la cuenta (§9.2).
+ */
 export function filasDeCategoria(
   filas: readonly FilaCalculo[],
   cuentaId: string,
   categoria: Categoria,
 ): FilaCalculo[] {
-  return filas.filter((f) => f.cuentaId === cuentaId && f.categoria === categoria);
+  return filas.filter(
+    (f) =>
+      f.cuentaId === cuentaId && (f.categoria === categoria || f.tipo === categoria),
+  );
 }
 
 /* ------------------------------------------------------------------ */

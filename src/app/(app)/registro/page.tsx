@@ -15,13 +15,8 @@ import {
 } from "@/lib/datos/consultas";
 import { alcancePorPost, delta, promedioPorPublicacion } from "@/lib/dominio/calculo";
 import { hoyISO, mesLargo } from "@/lib/dominio/formato";
-import {
-  CATEGORIAS,
-  type Categoria,
-  esCategoria,
-  esPlataforma,
-  PLATAFORMAS,
-} from "@/lib/dominio/plataformas";
+import { CATEGORIAS, type Categoria, esCategoria } from "@/lib/dominio/categorias";
+import { porRed } from "@/lib/dominio/redes";
 
 export const metadata = { title: "Registro · KPIs DLT" };
 
@@ -36,7 +31,7 @@ export default async function PaginaRegistro(props: PageProps<"/registro">) {
 
   const desde = primero(sp.desde) ?? hoy;
   const hasta = primero(sp.hasta) ?? desde;
-  const plataformaFiltro = primero(sp.plataforma);
+  const cuentaFiltro = primero(sp.cuenta);
   const categoriaFiltro = primero(sp.categoria);
   const usuarioFiltro = primero(sp.usuario);
 
@@ -44,7 +39,7 @@ export default async function PaginaRegistro(props: PageProps<"/registro">) {
     listarRegistros({
       desde,
       hasta,
-      plataforma: esPlataforma(plataformaFiltro) ? plataformaFiltro : undefined,
+      cuentaId: cuentaFiltro,
       categoria: esCategoria(categoriaFiltro) ? categoriaFiltro : undefined,
       usuario: usuarioFiltro,
     }),
@@ -71,6 +66,7 @@ export default async function PaginaRegistro(props: PageProps<"/registro">) {
 
     return [{
       registro: r,
+      cuenta,
       alcancePorPost: alcancePorPost(calc),
       sinBase: b === null,
       deltas: {
@@ -113,7 +109,11 @@ export default async function PaginaRegistro(props: PageProps<"/registro">) {
         </Link>
       </div>
 
-      <FormularioRegistro hoy={hoy} rango={{ desde, hasta }} />
+      <FormularioRegistro
+        hoy={hoy}
+        rango={{ desde, hasta }}
+        cuentas={cuentas.filter((c) => c.activa)}
+      />
 
       {!base && (
         <Nota>
@@ -145,20 +145,24 @@ export default async function PaginaRegistro(props: PageProps<"/registro">) {
           <input id="hasta" name="hasta" type="date" defaultValue={hasta} className="campo" />
         </div>
         <div className="space-y-1">
-          <label className="etiqueta" htmlFor="plataforma">
-            Plataforma
+          <label className="etiqueta" htmlFor="cuenta">
+            Cuenta
           </label>
           <select
-            id="plataforma"
-            name="plataforma"
-            defaultValue={plataformaFiltro ?? ""}
+            id="cuenta"
+            name="cuenta"
+            defaultValue={cuentaFiltro ?? ""}
             className="campo"
           >
             <option value="">Todas</option>
-            {PLATAFORMAS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
+            {porRed(cuentas).map(({ red, cuentas: suyas }) => (
+              <optgroup key={red} label={red}>
+                {suyas.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </div>
@@ -216,7 +220,7 @@ export default async function PaginaRegistro(props: PageProps<"/registro">) {
           <p className="text-xs text-[var(--color-tinta-tenue)]">
             {filas.length} {filas.length === 1 ? "fila" : "filas"} · {rango}
           </p>
-          <TablaRegistros filas={filas} rango={{ desde, hasta }} />
+          <TablaRegistros filas={filas} cuentas={cuentas} rango={{ desde, hasta }} />
         </>
       )}
     </div>

@@ -9,13 +9,14 @@
  */
 
 import { z } from "zod";
+import { CATEGORIAS, TIPOS_INSTAGRAM } from "@/lib/dominio/categorias";
+import { normalizarHashtag } from "@/lib/dominio/hashtag";
 import {
-  CATEGORIAS,
-  esCategoriaValida,
-  PLATAFORMAS,
+  type Cuenta,
+  esCategoriaValidaEnRed,
   REDES,
-  tieneAlcance,
-} from "@/lib/dominio/plataformas";
+  tieneAlcanceRed,
+} from "@/lib/dominio/redes";
 
 /**
  * Entero opcional de un formulario. §9.4: vacío significa "no se midió", así
@@ -47,74 +48,118 @@ const textoOpcional = (max: number) =>
     .optional()
     .transform((v) => v || null);
 
-export const esquemaRegistro = z
-  .object({
-    /*
-     * El mensaje va en los dos lugares a propósito: el de `.regex()` solo
-     * cubre un formato inválido, y sin el del tipo una fecha ausente muestra
-     * el texto crudo de Zod, que no le dice nada a nadie.
-     */
-    fecha: z
-      .string({ message: "Falta la fecha." })
-      .regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha no es válida."),
-    plataforma: z.enum(PLATAFORMAS, { message: "Elige una plataforma válida." }),
+/** Categoría opcional: la clave no llega si el selector está deshabilitado. */
+const categoriaOpcional = z
+  .union([z.enum(CATEGORIAS), z.literal(""), z.null()])
+  .optional()
+  .transform((v) => (v === "" || v === null || v === undefined ? null : v));
 
-    // Igual que los enteros: si el selector está deshabilitado, la clave no
-    // llega. Sin `.optional()` el formulario entero se cae.
-    categoria: z
-      .union([z.enum(CATEGORIAS), z.literal(""), z.null()])
-      .optional()
-      .transform((v) => (v === "" || v === null || v === undefined ? null : v)),
-
-    // §9.5: cuántas publicaciones representa la fila. Es el divisor de todos
-    // los promedios del día, así que no puede faltar ni ser cero.
-    publicaciones: z.coerce
-      .number({ message: "Escribe cuántas publicaciones representa la fila." })
-      .int("Las publicaciones deben ser un número entero.")
-      .min(1, "Una fila tiene que representar al menos 1 publicación."),
-
-    alcance: enteroDeFormulario,
-    visualizaciones: enteroDeFormulario,
-    interacciones: enteroDeFormulario,
-    nuevos_seguidores: enteroDeFormulario,
-
-    // §4.1: se ingresan a mano y viven en una sección colapsable, así que lo
-    // habitual es que no vengan.
-    visitas_perfil: enteroDeFormulario,
-    vistas_seguidores: enteroDeFormulario,
-    vistas_no_seguidores: enteroDeFormulario,
-
-    titulo_contenido: textoOpcional(300),
-    enlace: textoOpcional(2000).refine(
-      (v) => v === null || /^https?:\/\//i.test(v),
-      "El enlace debe empezar con http:// o https://",
-    ),
-  })
-  .refine((d) => esCategoriaValida(d.plataforma, d.categoria), {
-    message: "Esa categoría no corresponde a la plataforma elegida.",
-    path: ["categoria"],
-  })
-  // §9.6: YouTube no entrega alcance. Guardarlo sería inventar el dato.
-  .refine((d) => tieneAlcance(d.plataforma) || d.alcance === null, {
-    message: "YouTube no entrega alcance: deja ese campo vacío.",
-    path: ["alcance"],
-  });
-
-export type RegistroValidado = z.output<typeof esquemaRegistro>;
-
-export const esquemaReporte = z.object({
-  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  plan_publicaciones: textoOpcional(5000),
-  conversacion_audiencia: textoOpcional(5000),
-  aprendizajes: textoOpcional(5000),
-  recomendaciones: textoOpcional(5000),
-  riesgos: textoOpcional(5000),
-});
+const tipoOpcional = z
+  .union([z.enum(TIPOS_INSTAGRAM), z.literal(""), z.null()])
+  .optional()
+  .transform((v) => (v === "" || v === null || v === undefined ? null : v));
 
 /**
- * Pasa un FormData a objeto plano. Solo las entradas de texto: los archivos se
- * leen aparte.
+ * Esquema del registro, construido con las cuentas disponibles.
+ *
+ * Es una función y no una constante porque dos de las reglas de §9 dependen de
+ * la red de la cuenta elegida, y las cuentas son datos: viven en la base y
+ * cambian sin desplegar. Antes la plataforma era un enum y las reglas se podían
+ * escribir fijas en el esquema.
  */
+export function esquemaRegistroPara(cuentas: readonly Cuenta[]) {
+  const porId = new Map(cuentas.map((c) => [c.id, c]));
+
+  return z
+    .object({
+      /*
+       * El mensaje va en los dos lugares a propósito: el de `.regex()` solo
+       * cubre un formato inválido, y sin el del tipo una fecha ausente muestra
+       * el texto crudo de Zod, que no le dice nada a nadie.
+       */
+      fecha: z
+        .string({ message: "Falta la fecha." })
+        .regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha no es válida."),
+
+      cuenta_id: z
+        .string({ message: "Elige la cuenta." })
+        .uuid("La cuenta elegida no es válida."),
+
+      /** El formato. */
+      categoria: categoriaOpcional,
+      /** §3.2 — Reactivo o Normal, la otra clasificación de Instagram. */
+      tipo: tipoOpcional,
+
+      hashtag: z
+        .string()
+        .max(120)
+        .optional()
+        .transform((v) => normalizarHashtag(v)),
+
+      // §9.5: cuántas publicaciones representa la fila. Es el divisor de todos
+      // los promedios del día, así que no puede faltar ni ser cero.
+      publicaciones: z.coerce
+        .number({ message: "Escribe cuántas publicaciones representa la fila." })
+        .int("Las publicaciones deben ser un número entero.")
+        .min(1, "Una fila tiene que representar al menos 1 publicación."),
+
+      alcance: enteroDeFormulario,
+      visualizaciones: enteroDeFormulario,
+      interacciones: enteroDeFormulario,
+      nuevos_seguidores: enteroDeFormulario,
+
+      // §4.1: se ingresan a mano y viven en una sección colapsable, así que lo
+      // habitual es que no vengan.
+      visitas_perfil: enteroDeFormulario,
+      vistas_seguidores: enteroDeFormulario,
+      vistas_no_seguidores: enteroDeFormulario,
+
+      titulo_contenido: textoOpcional(300),
+      enlace: textoOpcional(2000).refine(
+        (v) => v === null || /^https?:\/\//i.test(v),
+        "El enlace debe empezar con http:// o https://",
+      ),
+    })
+    .refine((d) => porId.has(d.cuenta_id), {
+      message: "Esa cuenta no existe o está desactivada.",
+      path: ["cuenta_id"],
+    })
+    .refine(
+      (d) => {
+        const c = porId.get(d.cuenta_id);
+        return c === undefined || esCategoriaValidaEnRed(c.red, d.categoria);
+      },
+      {
+        message: "Esa categoría no corresponde a la red de la cuenta elegida.",
+        path: ["categoria"],
+      },
+    )
+    // §3.2 — Reactivo/Normal solo existe en Instagram.
+    .refine(
+      (d) => {
+        const c = porId.get(d.cuenta_id);
+        return c === undefined || d.tipo === null || c.red === "Instagram";
+      },
+      {
+        message: "Reactivo y Normal son clasificaciones de Instagram.",
+        path: ["tipo"],
+      },
+    )
+    // §9.6: YouTube no entrega alcance. Guardarlo sería inventar el dato.
+    .refine(
+      (d) => {
+        const c = porId.get(d.cuenta_id);
+        return c === undefined || tieneAlcanceRed(c.red) || d.alcance === null;
+      },
+      {
+        message: "YouTube no entrega alcance: deja ese campo vacío.",
+        path: ["alcance"],
+      },
+    );
+}
+
+export type RegistroValidado = z.output<ReturnType<typeof esquemaRegistroPara>>;
+
 /* ------------------------------------------------------------------ */
 /* Cuentas                                                             */
 /* ------------------------------------------------------------------ */
@@ -147,6 +192,27 @@ export const esquemaCuenta = z.object({
     .transform((v) => v ?? 100),
 });
 
+/* ------------------------------------------------------------------ */
+/* Reporte                                                             */
+/* ------------------------------------------------------------------ */
+
+export const esquemaReporte = z.object({
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  plan_publicaciones: textoOpcional(5000),
+  conversacion_audiencia: textoOpcional(5000),
+  aprendizajes: textoOpcional(5000),
+  recomendaciones: textoOpcional(5000),
+  riesgos: textoOpcional(5000),
+});
+
+/* ------------------------------------------------------------------ */
+/* Utilidades                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Pasa un FormData a objeto plano. Solo las entradas de texto: los archivos se
+ * leen aparte.
+ */
 export function desdeFormData(fd: FormData): Record<string, unknown> {
   const obj: Record<string, unknown> = {};
   for (const [k, v] of fd.entries()) {

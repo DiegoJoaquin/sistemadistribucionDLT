@@ -9,6 +9,7 @@ import {
 } from "@/componentes/FormularioEdicionRegistro";
 import { Cifra, Pct } from "@/componentes/ui";
 import type { BloqueDia, DetalleFila } from "@/lib/datos/consultas";
+import type { CuentaRow } from "@/lib/supabase/tipos-db";
 import { fechaHoraCorta } from "@/lib/dominio/formato";
 import { tieneAlcanceRed } from "@/lib/dominio/redes";
 
@@ -25,9 +26,12 @@ const COLUMNAS_DETALLE = 13;
  */
 export function TablaHistoricoDia({
   bloques,
+  cuentas,
   rango,
 }: {
   bloques: BloqueDia[];
+  /** Para el selector de cuenta del formulario de edición. */
+  cuentas: CuentaRow[];
   /** Rango filtrado, para avisar si una edición mueve la fila fuera de vista. */
   rango: { desde: string; hasta: string };
 }) {
@@ -40,11 +44,11 @@ export function TablaHistoricoDia({
     enlaceAFecha: (f) => `/historico?desde=${f}&hasta=${f}`,
   };
 
-  const alternar = (plataforma: string) =>
+  const alternar = (cuentaId: string) =>
     setAbiertas((previas) => {
       const siguiente = new Set(previas);
-      if (siguiente.has(plataforma)) siguiente.delete(plataforma);
-      else siguiente.add(plataforma);
+      if (siguiente.has(cuentaId)) siguiente.delete(cuentaId);
+      else siguiente.add(cuentaId);
       return siguiente;
     });
 
@@ -54,7 +58,7 @@ export function TablaHistoricoDia({
         <thead className="border-b border-[var(--color-filete)]">
           <tr>
             <th className="th w-8" />
-            <th className="th">Plataforma</th>
+            <th className="th">Cuenta</th>
             <th className="th text-right">Pub.</th>
             <th className="th text-right">Alcance</th>
             <th className="th text-right">Visualiz.</th>
@@ -176,6 +180,7 @@ export function TablaHistoricoDia({
                                   <td colSpan={COLUMNAS_DETALLE} className="p-3">
                                     <FormularioEdicionRegistro
                                       registro={d.registro}
+                                      cuentas={cuentas}
                                       onCerrar={() => setEditando(null)}
                                       rangoVisible={rangoVisible}
                                     />

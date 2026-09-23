@@ -2,7 +2,7 @@ import Link from "next/link";
 import { FormularioHistorico } from "@/componentes/FormularioHistorico";
 import { TablaHistoricoDia } from "@/componentes/TablaHistoricoDia";
 import { Nota, Vacio } from "@/componentes/ui";
-import { historicoPorDia, rangoDeRegistros } from "@/lib/datos/consultas";
+import { historicoPorDia, listarCuentas, rangoDeRegistros } from "@/lib/datos/consultas";
 import {
   diaSemana,
   fechaCorta,
@@ -28,7 +28,10 @@ export default async function PaginaHistorico(props: PageProps<"/historico">) {
   const desde = fecha(sp.desde) ?? rango?.desde ?? sumarDias(hoyISO(), -30);
   const hasta = fecha(sp.hasta) ?? rango?.hasta ?? hoyISO();
 
-  const { dias, base } = await historicoPorDia(desde, hasta);
+  const [{ dias, base }, cuentas] = await Promise.all([
+    historicoPorDia(desde, hasta),
+    listarCuentas(),
+  ]);
 
   const totalFilas = dias.reduce((a, d) => a + d.filas, 0);
   const totalPublicaciones = dias.reduce((a, d) => a + d.publicaciones, 0);
@@ -135,7 +138,11 @@ export default async function PaginaHistorico(props: PageProps<"/historico">) {
                   </div>
                 </div>
 
-                <TablaHistoricoDia bloques={dia.bloques} rango={{ desde, hasta }} />
+                <TablaHistoricoDia
+                  bloques={dia.bloques}
+                  cuentas={cuentas}
+                  rango={{ desde, hasta }}
+                />
               </section>
             ))}
           </div>

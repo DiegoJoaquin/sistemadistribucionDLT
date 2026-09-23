@@ -3,20 +3,16 @@
 import Link from "next/link";
 import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { SelectorCuenta } from "@/componentes/SelectorCuenta";
 import {
   actualizarRegistro,
   borrarRegistro,
   type Resultado,
 } from "@/lib/datos/acciones";
+import { TIPOS_INSTAGRAM } from "@/lib/dominio/categorias";
 import { estaEnRango, fechaCorta, fechaHoraCorta } from "@/lib/dominio/formato";
-import {
-  type Categoria,
-  categoriasDe,
-  PLATAFORMAS,
-  type Plataforma,
-  tieneAlcance,
-} from "@/lib/dominio/plataformas";
-import type { RegistroConAutor } from "@/lib/supabase/tipos-db";
+import { categoriasDeRed, tieneAlcanceRed } from "@/lib/dominio/redes";
+import type { CuentaRow, RegistroConAutor } from "@/lib/supabase/tipos-db";
 
 /**
  * Formulario de edición de un registro.
@@ -71,10 +67,12 @@ export interface RangoVisible {
 
 export function FormularioEdicionRegistro({
   registro,
+  cuentas,
   onCerrar,
   rangoVisible,
 }: {
   registro: RegistroConAutor;
+  cuentas: CuentaRow[];
   onCerrar: () => void;
   rangoVisible?: RangoVisible;
 }) {
@@ -82,8 +80,12 @@ export function FormularioEdicionRegistro({
     actualizarRegistro,
     null,
   );
-  const [plataforma, setPlataforma] = useState<Plataforma>(registro.plataforma);
-  const [categoria, setCategoria] = useState<Categoria | "">(registro.categoria ?? "");
+  const [cuentaId, setCuentaId] = useState<string>(registro.cuenta_id);
+
+  const cuenta = cuentas.find((c) => c.id === cuentaId);
+  const categorias = cuenta ? categoriasDeRed(cuenta.red) : [];
+  const conAlcance = cuenta ? tieneAlcanceRed(cuenta.red) : true;
+  const conTipo = cuenta?.red === "Instagram";
 
   /*
    * Se guardó bien, pero la fecha quedó fuera del rango que se está viendo: la
@@ -100,9 +102,6 @@ export function FormularioEdicionRegistro({
     if (estado?.ok && !seFueDelRango) onCerrar();
   }, [estado, seFueDelRango, onCerrar]);
 
-  const categorias = categoriasDe(plataforma);
-  const conAlcance = tieneAlcance(plataforma);
-
   if (seFueDelRango && estado?.fecha) {
     return (
       <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
@@ -114,13 +113,14 @@ export function FormularioEdicionRegistro({
           aparece en esta tabla.
         </p>
         <div className="mt-2.5 flex flex-wrap items-center gap-3">
-          <Link
-            href={rangoVisible.enlaceAFecha(estado.fecha)}
-            className="boton-suave"
-          >
+          <Link href={rangoVisible.enlaceAFecha(estado.fecha)} className="boton-suave">
             Ver el {fechaCorta(estado.fecha)}
           </Link>
-          <button type="button" onClick={onCerrar} className="text-[13px] underline-offset-2 hover:underline">
+          <button
+            type="button"
+            onClick={onCerrar}
+            className="text-[13px] underline-offset-2 hover:underline"
+          >
             Entendido
           </button>
         </div>
@@ -144,45 +144,30 @@ export function FormularioEdicionRegistro({
           />
         </div>
         <div className="space-y-1">
-          <label className="etiqueta">Plataforma</label>
-          <select
-            name="plataforma"
-            className="campo"
-            value={plataforma}
-            onChange={(e) => {
-              const nueva = e.target.value as Plataforma;
-              setPlataforma(nueva);
-              // Con una sola categoría queda puesta sola (TikTok es Video).
-              const suyas = categoriasDe(nueva);
-              setCategoria(suyas.length === 1 ? suyas[0] : "");
-            }}
-          >
-            {PLATAFORMAS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
+          <label className="etiqueta">Cuenta</label>
+          <SelectorCuenta cuentas={cuentas} valor={cuentaId} onCambio={setCuentaId} />
         </div>
         <div className="space-y-1">
-          <label className="etiqueta">Categoría</label>
+          <label className="etiqueta">Formato</label>
           <select
             name="categoria"
+            key={`cat-${cuenta?.red ?? "sin"}`}
             className="campo disabled:bg-[var(--color-realce)]"
             disabled={categorias.length === 0}
-            value={categoria}
-            onChange={(e) => setCategoria(e.target.value as Categoria | "")}
+            defaultValue={registro.categoria ?? ""}
           >
             {categorias.length === 0 ? (
               <option value="">sin categorías</option>
             ) : (
               <>
                 {categorias.length > 1 && <option value="">— elegir —</option>}
-                {categorias.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
+                {categorias
+                  .filter((c) => !TIPOS_INSTAGRAM.includes(c as never))
+                  .map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
               </>
             )}
           </select>
@@ -202,6 +187,40 @@ export function FormularioEdicionRegistro({
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="space-y-1">
+          <label className="etiqueta">Tipo</label>
+          <select
+            name="tipo"
+            key={`tipo-${cuenta?.red ?? "sin"}`}
+            className="campo disabled:bg-[var(--color-realce)]"
+            disabled={!conTipo}
+            defaultValue={registro.tipo ?? ""}
+          >
+            {conTipo ? (
+              <>
+                <option value="">— sin clasificar —</option>
+                {TIPOS_INSTAGRAM.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </>
+            ) : (
+              <option value="">solo en Instagram</option>
+            )}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="etiqueta">Hashtag o serie</label>
+          <input
+            name="hashtag"
+            type="text"
+            maxLength={120}
+            defaultValue={registro.hashtag ?? ""}
+            placeholder="#FECHA21xDLT"
+            className="campo"
+          />
+        </div>
         <Num
           nombre="alcance"
           etiqueta="Alcance"
@@ -213,16 +232,25 @@ export function FormularioEdicionRegistro({
           etiqueta="Visualizaciones"
           valor={registro.visualizaciones}
         />
-        <Num
-          nombre="interacciones"
-          etiqueta="Interacciones"
-          valor={registro.interacciones}
-        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Num nombre="interacciones" etiqueta="Interacciones" valor={registro.interacciones} />
         <Num
           nombre="nuevos_seguidores"
           etiqueta="Nuevos seguidores"
           valor={registro.nuevos_seguidores}
         />
+        <div className="space-y-1 sm:col-span-2">
+          <label className="etiqueta">Título del contenido</label>
+          <input
+            name="titulo_contenido"
+            type="text"
+            maxLength={300}
+            defaultValue={registro.titulo_contenido ?? ""}
+            className="campo"
+          />
+        </div>
       </div>
 
       <div className="rounded-md border border-dashed border-[var(--color-filete-fuerte)] bg-white/70 p-3">
@@ -248,26 +276,14 @@ export function FormularioEdicionRegistro({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className="space-y-1">
-          <label className="etiqueta">Título del contenido</label>
-          <input
-            name="titulo_contenido"
-            type="text"
-            maxLength={300}
-            defaultValue={registro.titulo_contenido ?? ""}
-            className="campo"
-          />
-        </div>
-        <div className="space-y-1">
-          <label className="etiqueta">Enlace</label>
-          <input
-            name="enlace"
-            type="url"
-            defaultValue={registro.enlace ?? ""}
-            className="campo"
-          />
-        </div>
+      <div className="space-y-1">
+        <label className="etiqueta">Enlace</label>
+        <input
+          name="enlace"
+          type="url"
+          defaultValue={registro.enlace ?? ""}
+          className="campo"
+        />
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -277,8 +293,9 @@ export function FormularioEdicionRegistro({
         </button>
         <span className="flex-1" />
         <span className="text-xs text-[var(--color-tinta-tenue)]">
-          Cargado por {registro.autor?.nombre ?? "—"} el{" "}
-          {fechaHoraCorta(registro.created_at)}
+          {registro.fuente === "manual" ? "Cargado a mano" : `Importado (${registro.fuente})`}
+          {" por "}
+          {registro.autor?.nombre ?? "—"} el {fechaHoraCorta(registro.created_at)}
         </span>
         <button
           type="submit"

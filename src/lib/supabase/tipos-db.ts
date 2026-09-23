@@ -32,7 +32,17 @@ export interface RegistroRow {
    * hoy dependen de ella.
    */
   plataforma: Plataforma;
+  /** El formato. */
   categoria: Categoria | null;
+  /** §3.2 — Reactivo o Normal, la otra clasificación de Instagram. */
+  tipo: Categoria | null;
+  /** Serie o hashtag, normalizado. Es el corte del reporte semanal. */
+  hashtag: string | null;
+  /** Hora que muestra la plataforma, sin zona. Solo en lo importado. */
+  publicado_en: string | null;
+  /** Identificador en la plataforma: evita importar dos veces lo mismo. */
+  id_externo: string | null;
+  fuente: FuenteImport;
   publicaciones: number;
   alcance: number | null;
   visualizaciones: number | null;

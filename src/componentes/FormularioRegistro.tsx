@@ -3,14 +3,12 @@
 import Link from "next/link";
 import { useActionState, useEffect, useId, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { SelectorCuenta } from "@/componentes/SelectorCuenta";
 import { crearRegistro, type Resultado } from "@/lib/datos/acciones";
+import { TIPOS_INSTAGRAM } from "@/lib/dominio/categorias";
 import { estaEnRango, fechaCorta } from "@/lib/dominio/formato";
-import {
-  categoriasDe,
-  PLATAFORMAS,
-  type Plataforma,
-  tieneAlcance,
-} from "@/lib/dominio/plataformas";
+import { categoriasDeRed, tieneAlcanceRed } from "@/lib/dominio/redes";
+import type { CuentaRow } from "@/lib/supabase/tipos-db";
 
 function Guardar() {
   const { pending } = useFormStatus();
@@ -59,21 +57,27 @@ function CampoNumero({
 export function FormularioRegistro({
   hoy,
   rango,
+  cuentas,
 }: {
   hoy: string;
   /** Rango que está filtrado en la tabla de abajo. */
   rango: { desde: string; hasta: string };
+  /** Cuentas activas, las únicas que se pueden elegir al cargar. */
+  cuentas: CuentaRow[];
 }) {
   const [estado, accion] = useActionState<Resultado | null, FormData>(
     crearRegistro,
     null,
   );
-  const [plataforma, setPlataforma] = useState<Plataforma>("Instagram DLT");
+  const [cuentaId, setCuentaId] = useState<string>(cuentas[0]?.id ?? "");
   const [verPerfil, setVerPerfil] = useState(false);
   const form = useRef<HTMLFormElement>(null);
 
-  const categorias = categoriasDe(plataforma);
-  const conAlcance = tieneAlcance(plataforma);
+  const cuenta = cuentas.find((c) => c.id === cuentaId);
+  const categorias = cuenta ? categoriasDeRed(cuenta.red) : [];
+  const conAlcance = cuenta ? tieneAlcanceRed(cuenta.red) : true;
+  // §3.2 — Reactivo/Normal solo existe en Instagram.
+  const conTipo = cuenta?.red === "Instagram";
 
   /*
    * Se guardó, pero en una fecha que la tabla de abajo no está mostrando. Sin
@@ -84,8 +88,8 @@ export function FormularioRegistro({
     estado.fecha !== undefined &&
     !estaEnRango(estado.fecha, rango.desde, rango.hasta);
 
-  // Al guardar bien, se limpian las métricas pero se mantienen fecha y
-  // plataforma: casi siempre se cargan varias filas seguidas de lo mismo.
+  // Al guardar bien se limpian las métricas pero se mantienen fecha y cuenta:
+  // casi siempre se cargan varias publicaciones seguidas de la misma cuenta.
   useEffect(() => {
     if (estado?.ok && form.current) {
       const f = form.current;
@@ -99,6 +103,7 @@ export function FormularioRegistro({
         "vistas_no_seguidores",
         "titulo_contenido",
         "enlace",
+        "hashtag",
       ]) {
         const el = f.elements.namedItem(campo);
         if (el instanceof HTMLInputElement) el.value = "";
@@ -108,12 +113,26 @@ export function FormularioRegistro({
     }
   }, [estado]);
 
+  if (cuentas.length === 0) {
+    return (
+      <div className="tarjeta p-4">
+        <p className="text-sm text-[var(--color-tinta-suave)]">
+          No hay ninguna cuenta activa.{" "}
+          <Link href="/cuentas" className="underline underline-offset-2">
+            Agrega una en Cuentas
+          </Link>{" "}
+          para poder registrar publicaciones.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <form ref={form} action={accion} className="tarjeta p-4">
       <div className="mb-3 flex items-baseline justify-between gap-2">
         <h2 className="text-sm font-semibold">Agregar publicaciones del día</h2>
         <p className="text-xs text-[var(--color-tinta-tenue)]">
-          Una fila por plataforma y categoría
+          Una fila por publicación
         </p>
       </div>
 
@@ -133,34 +152,27 @@ export function FormularioRegistro({
         </div>
 
         <div className="space-y-1">
-          <label className="etiqueta" htmlFor="f-plataforma">
-            Plataforma
+          <label className="etiqueta" htmlFor="f-cuenta">
+            Cuenta
           </label>
-          <select
-            id="f-plataforma"
-            name="plataforma"
-            className="campo"
-            value={plataforma}
-            onChange={(e) => setPlataforma(e.target.value as Plataforma)}
-          >
-            {PLATAFORMAS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
+          <SelectorCuenta
+            id="f-cuenta"
+            cuentas={cuentas}
+            valor={cuentaId}
+            onCambio={setCuentaId}
+          />
         </div>
 
         <div className="space-y-1">
           <label className="etiqueta" htmlFor="f-categoria">
-            Categoría
+            Formato
           </label>
           <select
             id="f-categoria"
             name="categoria"
-            /* La clave fuerza a React a reiniciar el select al cambiar de
-               plataforma; si no, mantiene la opción elegida para la anterior. */
-            key={plataforma}
+            /* La clave reinicia el selector al cambiar de cuenta; si no,
+               mantendría la opción elegida para la red anterior. */
+            key={cuenta?.red ?? "sin-cuenta"}
             className="campo disabled:bg-[var(--color-realce)] disabled:text-[var(--color-tinta-tenue)]"
             disabled={categorias.length === 0}
           >
@@ -168,14 +180,16 @@ export function FormularioRegistro({
               <option value="">sin categorías</option>
             ) : (
               <>
-                {/* Con una sola categoría no hay nada que elegir: queda puesta.
-                    TikTok es siempre Video. */}
+                {/* Con una sola categoría no hay nada que elegir. */}
                 {categorias.length > 1 && <option value="">— elegir —</option>}
-                {categorias.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
+                {categorias
+                  // En Instagram el tipo va en su propio campo.
+                  .filter((c) => !TIPOS_INSTAGRAM.includes(c as never))
+                  .map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
               </>
             )}
           </select>
@@ -202,6 +216,50 @@ export function FormularioRegistro({
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {/* §3.2 — la otra clasificación de Instagram, en su propio campo. */}
+        <div className="space-y-1">
+          <label className="etiqueta" htmlFor="f-tipo">
+            Tipo
+          </label>
+          <select
+            id="f-tipo"
+            name="tipo"
+            key={`tipo-${cuenta?.red ?? "sin"}`}
+            className="campo disabled:bg-[var(--color-realce)] disabled:text-[var(--color-tinta-tenue)]"
+            disabled={!conTipo}
+          >
+            {conTipo ? (
+              <>
+                <option value="">— sin clasificar —</option>
+                {TIPOS_INSTAGRAM.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </>
+            ) : (
+              <option value="">solo en Instagram</option>
+            )}
+          </select>
+        </div>
+
+        <div className="space-y-1">
+          <label className="etiqueta" htmlFor="f-hashtag">
+            Hashtag o serie
+          </label>
+          <input
+            id="f-hashtag"
+            name="hashtag"
+            type="text"
+            maxLength={120}
+            placeholder="#FECHA21xDLT"
+            className="campo"
+          />
+          <p className="text-[11px] leading-tight text-[var(--color-tinta-tenue)]">
+            Es el corte del reporte semanal
+          </p>
+        </div>
+
         <CampoNumero
           nombre="alcance"
           etiqueta="Alcance"
@@ -209,8 +267,24 @@ export function FormularioRegistro({
           ayuda={conAlcance ? undefined : "YouTube no lo entrega"}
         />
         <CampoNumero nombre="visualizaciones" etiqueta="Visualizaciones" />
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <CampoNumero nombre="interacciones" etiqueta="Interacciones" />
         <CampoNumero nombre="nuevos_seguidores" etiqueta="Nuevos seguidores" />
+        <div className="space-y-1 sm:col-span-2">
+          <label className="etiqueta" htmlFor="f-titulo">
+            Título del contenido <span className="normal-case">(opcional)</span>
+          </label>
+          <input
+            id="f-titulo"
+            name="titulo_contenido"
+            type="text"
+            maxLength={300}
+            placeholder="Para identificarlo en el reporte"
+            className="campo"
+          />
+        </div>
       </div>
 
       {/* §4.1 — los tres campos de perfil van visualmente separados: ninguna
@@ -242,32 +316,17 @@ export function FormularioRegistro({
         )}
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className="space-y-1">
-          <label className="etiqueta" htmlFor="f-titulo">
-            Título del contenido <span className="normal-case">(opcional)</span>
-          </label>
-          <input
-            id="f-titulo"
-            name="titulo_contenido"
-            type="text"
-            maxLength={300}
-            placeholder="Para identificarlo en el reporte"
-            className="campo"
-          />
-        </div>
-        <div className="space-y-1">
-          <label className="etiqueta" htmlFor="f-enlace">
-            Enlace <span className="normal-case">(opcional)</span>
-          </label>
-          <input
-            id="f-enlace"
-            name="enlace"
-            type="url"
-            placeholder="https://…"
-            className="campo"
-          />
-        </div>
+      <div className="mt-3">
+        <label className="etiqueta" htmlFor="f-enlace">
+          Enlace <span className="normal-case">(opcional)</span>
+        </label>
+        <input
+          id="f-enlace"
+          name="enlace"
+          type="url"
+          placeholder="https://…"
+          className="campo mt-1"
+        />
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">

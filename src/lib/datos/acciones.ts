@@ -5,10 +5,11 @@ import { redirect } from "next/navigation";
 import {
   desdeFormData,
   esquemaCuenta,
-  esquemaRegistro,
+  esquemaRegistroPara,
   esquemaReporte,
   primerError,
 } from "./esquemas";
+import { listarCuentas } from "./consultas";
 import { cruzar } from "@/lib/importar/cruzar";
 import { leerArchivo } from "@/lib/importar/parsers";
 import { leerRegistroExcel } from "@/lib/importar/registro-excel";
@@ -54,7 +55,13 @@ export async function crearRegistro(
   fd: FormData,
 ): Promise<Resultado> {
   const { usuarioId } = await exigirSesion();
-  const parseado = esquemaRegistro.safeParse(desdeFormData(fd));
+  /*
+   * Se validan contra TODAS las cuentas, no solo las activas: editar una fila
+   * vieja de una cuenta que se desactivó tiene que seguir funcionando. Que el
+   * formulario ofrezca solo las activas es cosa del formulario.
+   */
+  const esquema = esquemaRegistroPara(await listarCuentas());
+  const parseado = esquema.safeParse(desdeFormData(fd));
 
   if (!parseado.success) {
     return { ok: false, mensaje: primerError(parseado.error) };
@@ -79,7 +86,8 @@ export async function actualizarRegistro(
   const id = String(fd.get("id") ?? "");
   if (!id) return { ok: false, mensaje: "Falta el identificador del registro." };
 
-  const parseado = esquemaRegistro.safeParse(desdeFormData(fd));
+  const esquema = esquemaRegistroPara(await listarCuentas());
+  const parseado = esquema.safeParse(desdeFormData(fd));
   if (!parseado.success) {
     return { ok: false, mensaje: primerError(parseado.error) };
   }
