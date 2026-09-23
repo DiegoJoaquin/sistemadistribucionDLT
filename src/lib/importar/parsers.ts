@@ -8,24 +8,20 @@
 
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
-import type { Categoria, Plataforma } from "@/lib/dominio/plataformas";
-import { clasificarInstagram } from "./clasificar";
+import type { Categoria } from "@/lib/dominio/categorias";
+import { clasificarSiSePuede } from "./clasificar";
 import type { PublicacionImportada, ResultadoImport } from "./tipos";
 import {
   fechaDeCelda,
   mesDe,
   num,
   type OrdenFecha,
+  primerHashtag,
   sumaOpcional,
   texto,
 } from "./util";
 
 type Fila = Record<string, unknown>;
-
-const CUENTAS_INSTAGRAM: Record<string, Plataforma> = {
-  dltsports: "Instagram DLT",
-  "debuenafuente.dlt": "Instagram DBF",
-};
 
 /* ------------------------------------------------------------------ */
 /* Meta Business Suite — CSV (Instagram DLT y DBF)                     */
@@ -45,18 +41,16 @@ export function leerMetaCSV(contenido: string): ResultadoImport {
     skipEmptyLines: true,
   });
 
-  const cuenta =
-    texto(data.find((f) => texto(f["Nombre de usuario de la cuenta"]))?.[
+  const cuenta = texto(
+    data.find((f) => texto(f["Nombre de usuario de la cuenta"]))?.[
       "Nombre de usuario de la cuenta"
-    ]) ?? "";
-  const plataforma = CUENTAS_INSTAGRAM[cuenta];
-  if (!plataforma) {
+    ],
+  );
+  if (!cuenta) {
     throw new Error(
-      `La cuenta "${cuenta}" del CSV no corresponde a Instagram DLT (@dltsports) ni a Instagram DBF (@debuenafuente.dlt).`,
+      'El CSV no trae la columna "Nombre de usuario de la cuenta", así que no puedo saber de qué cuenta es. ¿Es la exportación de publicaciones de Meta Business Suite?',
     );
   }
-  const claveCuenta = cuenta as "dltsports" | "debuenafuente.dlt";
-
   const publicaciones: PublicacionImportada[] = [];
   for (const f of data) {
     // Meta usa MM/DD/YYYY. YouTube usa DD/MM/YYYY. No son intercambiables.
@@ -64,7 +58,7 @@ export function leerMetaCSV(contenido: string): ResultadoImport {
     if (!publicado_en) continue;
 
     const caption = texto(f["Descripción"]);
-    const clas = clasificarInstagram(claveCuenta, caption);
+    const clas = clasificarSiSePuede(cuenta, caption);
 
     const me_gusta = num(f["Me gusta"]);
     const comentarios = num(f["Comentarios"]);
@@ -72,12 +66,11 @@ export function leerMetaCSV(contenido: string): ResultadoImport {
     const guardados = num(f["Veces que se guardó"]);
 
     publicaciones.push({
-      plataforma,
       publicado_en,
       formato: FORMATO_META[String(f["Tipo de publicación"] ?? "").trim()] ?? null,
-      tipo: clas.tipo,
-      tipo_auto: clas.tipo,
-      serie_hashtag: clas.serie,
+      tipo: clas?.tipo ?? null,
+      tipo_auto: clas?.tipo ?? null,
+      serie_hashtag: clas?.serie ?? primerHashtag(caption),
       caption,
       duracion_s: num(f["Duración (segundos)"]),
       visualizaciones: num(f["Visualizaciones"]),
@@ -96,7 +89,7 @@ export function leerMetaCSV(contenido: string): ResultadoImport {
   }
 
   return {
-    plataforma,
+    detectada: { usuario: cuenta, red: "Instagram" },
     fuente: "meta",
     cuenta,
     publicaciones,
@@ -164,22 +157,19 @@ const FORMATO_ICONOSQUARE: Record<string, Categoria> = {
 };
 
 function leerInstagramXLSX(cab: CabeceraXLSX): ResultadoImport {
-  const cuenta = (cab.perfil ?? "").replace(/^@/, "");
-  const plataforma = CUENTAS_INSTAGRAM[cuenta];
-  if (!plataforma) {
+  const cuenta = texto((cab.perfil ?? "").replace(/^@/, ""));
+  if (!cuenta) {
     throw new Error(
-      `La cuenta "${cuenta}" del Excel no corresponde a Instagram DLT (@dltsports) ni a Instagram DBF (@debuenafuente.dlt).`,
+      'El Excel no trae el perfil en la celda B1, así que no puedo saber de qué cuenta es.',
     );
   }
-  const claveCuenta = cuenta as "dltsports" | "debuenafuente.dlt";
-
   const publicaciones: PublicacionImportada[] = [];
   for (const f of cab.filas) {
     const publicado_en = fechaDeCelda(f["Date"], "DMY");
     if (!publicado_en) continue;
 
     const caption = texto(f["Caption"]);
-    const clas = clasificarInstagram(claveCuenta, caption);
+    const clas = clasificarSiSePuede(cuenta, caption);
 
     const me_gusta = num(f["Likes"]);
     const comentarios = num(f["Comments"]);
@@ -187,13 +177,12 @@ function leerInstagramXLSX(cab: CabeceraXLSX): ResultadoImport {
     const compartidos = num(f["Shares"]);
 
     publicaciones.push({
-      plataforma,
       publicado_en,
       formato:
         FORMATO_ICONOSQUARE[String(f["Type"] ?? "").trim().toLowerCase()] ?? null,
-      tipo: clas.tipo,
-      tipo_auto: clas.tipo,
-      serie_hashtag: clas.serie,
+      tipo: clas?.tipo ?? null,
+      tipo_auto: clas?.tipo ?? null,
+      serie_hashtag: clas?.serie ?? primerHashtag(caption),
       caption,
       duracion_s: null, // esta exportación no trae duración
       visualizaciones: num(f["Total Views / Impressions"]),
@@ -214,7 +203,7 @@ function leerInstagramXLSX(cab: CabeceraXLSX): ResultadoImport {
   }
 
   return {
-    plataforma,
+    detectada: { usuario: cuenta, red: "Instagram" },
     fuente: "iconosquare",
     cuenta,
     publicaciones,
@@ -237,15 +226,17 @@ function leerTikTokXLSX(cab: CabeceraXLSX): ResultadoImport {
     const comentarios = num(f["Comments"]);
     const favoritos = num(f["Favorites"]);
     const compartidos = num(f["Shares"]);
+    const caption = texto(f["Caption"]);
 
     publicaciones.push({
-      plataforma: "TikTok",
       publicado_en,
       formato: "Video", // única categoría de TikTok
+      // Reactivo/Normal es una clasificación de Instagram (§3.2).
       tipo: null,
       tipo_auto: null,
-      serie_hashtag: null,
-      caption: texto(f["Caption"]),
+      // El hashtag sí: es el corte del catastro semanal y existe en toda red.
+      serie_hashtag: primerHashtag(caption),
+      caption,
       duracion_s: num(f["Video duration (seconds)"]),
       visualizaciones: num(f["Video Views"]),
       alcance: num(f["Reach"]),
@@ -263,7 +254,7 @@ function leerTikTokXLSX(cab: CabeceraXLSX): ResultadoImport {
   }
 
   return {
-    plataforma: "TikTok",
+    detectada: { usuario: cab.perfil, red: "TikTok" },
     fuente: "tiktok",
     cuenta: cab.perfil,
     publicaciones,
@@ -292,15 +283,15 @@ function leerYouTubeXLSX(cab: CabeceraXLSX): ResultadoImport {
     const me_gusta = num(f["Likes"]);
     const comentarios = num(f["Comments"]);
     const compartidos = num(f["Shares"]);
+    const caption = texto(f["Caption"]);
 
     publicaciones.push({
-      plataforma: "YouTube",
       publicado_en,
       formato: FORMATO_YOUTUBE[String(f["Type"] ?? "").trim().toLowerCase()] ?? null,
       tipo: null,
       tipo_auto: null,
-      serie_hashtag: null,
-      caption: texto(f["Caption"]),
+      serie_hashtag: primerHashtag(caption),
+      caption,
       duracion_s: num(f["Video duration (seconds)"]),
       visualizaciones: num(f["Views"]),
       alcance: null, // §9.6: YouTube no entrega alcance
@@ -318,7 +309,7 @@ function leerYouTubeXLSX(cab: CabeceraXLSX): ResultadoImport {
   }
 
   return {
-    plataforma: "YouTube",
+    detectada: { usuario: cab.perfil, red: "YouTube" },
     fuente: "youtube",
     cuenta: cab.perfil,
     publicaciones,

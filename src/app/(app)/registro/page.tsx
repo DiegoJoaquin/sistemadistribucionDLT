@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { FormularioImportarPublicaciones } from "@/componentes/FormularioImportarPublicaciones";
 import { FormularioRegistro } from "@/componentes/FormularioRegistro";
 import { TablaRegistros, type FilaTabla } from "@/componentes/TablaRegistros";
 import { Nota, Vacio } from "@/componentes/ui";
@@ -108,6 +109,8 @@ export default async function PaginaRegistro(props: PageProps<"/registro">) {
           Ver panel del día
         </Link>
       </div>
+
+      <FormularioImportarPublicaciones rango={{ desde, hasta }} />
 
       <FormularioRegistro
         hoy={hoy}

@@ -1,13 +1,27 @@
-import type { Categoria, Plataforma } from "@/lib/dominio/plataformas";
+import type { Categoria } from "@/lib/dominio/categorias";
+import type { Red } from "@/lib/dominio/redes";
 
 export type FuenteImport = "meta" | "iconosquare" | "tiktok" | "youtube" | "manual";
+
+/**
+ * La cuenta que viene declarada en el propio archivo.
+ *
+ * Es lo que reemplaza al enum de cinco plataformas. Un archivo no sabe nada de
+ * nuestras cuentas: sabe su `@usuario` y su red, y con eso se busca a cuál de
+ * las cuentas cargadas corresponde (`resolverCuenta`). Así una exportación de
+ * @diegoat se importa sin tocar el código ni agregar nada a un enum.
+ */
+export interface CuentaDetectada {
+  /** El @ tal como lo trae el archivo, sin arroba y sin normalizar. */
+  usuario: string | null;
+  red: Red;
+}
 
 /**
  * Una publicación importada desde la exportación de una plataforma.
  * Todos los campos que la fuente no entrega quedan en null (§9.4).
  */
 export interface PublicacionImportada {
-  plataforma: Plataforma;
   /** Naive local (hora que muestra la plataforma), sin zona. "YYYY-MM-DDTHH:mm:ss". */
   publicado_en: string | null;
   /** Imagen | Reel | Carrusel | Short | Video | Foto */
@@ -33,8 +47,10 @@ export interface PublicacionImportada {
 }
 
 export interface ResultadoImport {
-  plataforma: Plataforma;
+  /** Quién publicó esto, según el archivo. */
+  detectada: CuentaDetectada;
   fuente: FuenteImport;
+  /** El perfil tal como lo rotula el archivo, para mostrarlo. */
   cuenta: string | null;
   publicaciones: PublicacionImportada[];
   /** Meses detectados en el archivo, "YYYY-MM". */

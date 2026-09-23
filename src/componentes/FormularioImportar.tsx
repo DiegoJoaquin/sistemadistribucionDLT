@@ -78,15 +78,17 @@ export function FormularioImportar({ mesPorDefecto }: { mesPorDefecto: string })
           {estado.detalle && (
             <ul className="mt-1.5 space-y-0.5 text-[13px]">
               <li>
-                Plataforma: <strong>{estado.detalle.plataforma}</strong>
-                {estado.detalle.cuenta && ` · ${estado.detalle.cuenta}`}
+                Cuenta: <strong>{estado.detalle.cuenta}</strong> ·{" "}
+                {estado.detalle.red}
+                {estado.detalle.usuarioArchivo &&
+                  ` · @${estado.detalle.usuarioArchivo.replace(/^@/, "")}`}
               </li>
 
               {estado.detalle.modo === "completar" && (
                 <>
                   <li>
-                    Ya había publicaciones de otra exportación para esta
-                    plataforma, así que este archivo solo{" "}
+                    Ya había publicaciones de otra exportación para esta cuenta,
+                    así que este archivo solo{" "}
                     <strong>completó campos vacíos</strong> — no agregó filas.
                   </li>
                   {estado.detalle.camposCompletados.length > 0 && (

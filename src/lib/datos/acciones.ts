@@ -10,6 +10,16 @@ import {
   primerError,
 } from "./esquemas";
 import { listarCuentas } from "./consultas";
+import type { Red } from "@/lib/dominio/redes";
+import {
+  aFilasRegistro,
+  contarHashtags,
+  type FilaRegistroImportada,
+  fusionarConExistente,
+  type RangoFechas,
+  rangoDe,
+} from "@/lib/importar/a-registro";
+import { resolverCuenta } from "@/lib/importar/cuentas";
 import { cruzar } from "@/lib/importar/cruzar";
 import { leerArchivo } from "@/lib/importar/parsers";
 import { leerRegistroExcel } from "@/lib/importar/registro-excel";
@@ -116,8 +126,11 @@ export async function borrarRegistro(fd: FormData): Promise<void> {
 /* ------------------------------------------------------------------ */
 
 export interface DetalleImport {
-  plataforma: string;
-  cuenta: string | null;
+  /** Nombre de la cuenta a la que se resolvió el archivo. */
+  cuenta: string;
+  red: Red;
+  /** El perfil tal como venía rotulado en el archivo. */
+  usuarioArchivo: string | null;
   mes: string;
   /**
    * canonica  — primera fuente de esta plataforma: define el conjunto del mes
@@ -139,10 +152,15 @@ export interface ResultadoImportar extends Resultado {
   detalle?: DetalleImport;
 }
 
-function aFilaBase(p: PublicacionImportada, lineaBaseId: string) {
+/*
+ * `plataforma` no se escribe: la llena el trigger de sincronización a partir de
+ * `cuenta_id`, y solo cuando la cuenta es una de las cinco originales. Ponerla
+ * acá obligaría a inventar un valor para la cuenta de un influencer.
+ */
+function aFilaBase(p: PublicacionImportada, lineaBaseId: string, cuentaId: string) {
   return {
     linea_base_id: lineaBaseId,
-    plataforma: p.plataforma,
+    cuenta_id: cuentaId,
     publicado_en: p.publicado_en,
     formato: p.formato,
     tipo: p.tipo,
@@ -196,6 +214,14 @@ export async function importarArchivo(
   } catch (e) {
     return { ok: false, mensaje: e instanceof Error ? e.message : "No pude leer el archivo." };
   }
+
+  // A qué cuenta corresponde el archivo. Antes salía de un enum de cinco
+  // valores; ahora se busca por el @usuario, así que funciona con cualquiera.
+  const resuelta = resolverCuenta(await listarCuentas(), leido.detectada);
+  if (!resuelta.ok) {
+    return { ok: false, mensaje: resuelta.motivo };
+  }
+  const cuenta = resuelta.cuenta;
 
   const delMes = leido.publicaciones.filter(
     (p) => p.publicado_en && mesDe(p.publicado_en) === mesElegido,
@@ -254,7 +280,7 @@ export async function importarArchivo(
     .from("publicaciones_base")
     .select("*")
     .eq("linea_base_id", lineaBaseId)
-    .eq("plataforma", leido.plataforma);
+    .eq("cuenta_id", cuenta.id);
 
   if (errorLeer) return { ok: false, mensaje: errorLeer.message };
 
@@ -264,8 +290,9 @@ export async function importarArchivo(
 
   const advertencias = [...leido.advertencias];
   const comun: DetalleImport = {
-    plataforma: leido.plataforma,
-    cuenta: leido.cuenta,
+    cuenta: cuenta.nombre,
+    red: cuenta.red,
+    usuarioArchivo: leido.cuenta,
     mes: mesElegido,
     modo: "canonica",
     insertadas: 0,
@@ -310,7 +337,7 @@ export async function importarArchivo(
 
     return {
       ok: true,
-      mensaje: `Se completaron ${cruce.enriquecimientos.length} publicaciones de ${leido.plataforma} con los datos de este archivo.`,
+      mensaje: `Se completaron ${cruce.enriquecimientos.length} publicaciones de ${cuenta.nombre} con los datos de este archivo.`,
       detalle: {
         ...comun,
         modo: "completar",
@@ -334,7 +361,7 @@ export async function importarArchivo(
       .from("publicaciones_base")
       .delete()
       .eq("linea_base_id", lineaBaseId)
-      .eq("plataforma", leido.plataforma)
+      .eq("cuenta_id", cuenta.id)
       .eq("fuente", leido.fuente);
 
     advertencias.push(
@@ -345,7 +372,7 @@ export async function importarArchivo(
   const { error, count } = await supabase
     .from("publicaciones_base")
     .insert(
-      delMes.map((p) => aFilaBase(p, lineaBaseId)),
+      delMes.map((p) => aFilaBase(p, lineaBaseId, cuenta.id)),
       { count: "exact" },
     );
 
@@ -357,11 +384,197 @@ export async function importarArchivo(
 
   return {
     ok: true,
-    mensaje: `Se importaron ${count ?? delMes.length} publicaciones de ${leido.plataforma}.`,
+    mensaje: `Se importaron ${count ?? delMes.length} publicaciones de ${cuenta.nombre}.`,
     detalle: {
       ...comun,
       modo: deEstaFuente.length > 0 ? "reemplazo" : "canonica",
       insertadas: count ?? delMes.length,
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Importar publicaciones directo al registro                          */
+/* ------------------------------------------------------------------ */
+
+export interface DetalleImportRegistro {
+  cuenta: string;
+  red: Red;
+  usuarioArchivo: string | null;
+  fuente: string;
+  insertadas: number;
+  actualizadas: number;
+  sinFecha: number;
+  fueraDeRango: number;
+  repetidasEnArchivo: number;
+  desde: string;
+  hasta: string;
+  hashtags: { hashtag: string | null; n: number }[];
+  advertencias: string[];
+}
+
+export interface ResultadoImportRegistro extends Resultado {
+  detalle?: DetalleImportRegistro;
+}
+
+/**
+ * §5.1 + catastro semanal — sube la exportación y el registro se llena solo.
+ *
+ * Una fila por publicación, con su hashtag y su formato ya deducidos. Es lo que
+ * antes se copiaba a mano publicación por publicación desde Meta o Iconosquare.
+ *
+ * Es idempotente: la identidad de una publicación es (cuenta, id_externo), así
+ * que subir dos veces el mismo archivo actualiza en vez de duplicar. Eso
+ * importa más de lo que parece — una exportación duplicada partiría en dos
+ * todos los promedios del día, que es exactamente el tipo de error silencioso
+ * que tenía el Excel.
+ */
+export async function importarPublicaciones(
+  _previo: ResultadoImportRegistro | null,
+  fd: FormData,
+): Promise<ResultadoImportRegistro> {
+  const { usuarioId } = await exigirSesion();
+
+  const archivo = fd.get("archivo");
+  if (!(archivo instanceof File) || archivo.size === 0) {
+    return { ok: false, mensaje: "Elige un archivo para importar." };
+  }
+
+  const rango: RangoFechas = {};
+  const desdePedido = String(fd.get("desde") ?? "").trim();
+  const hastaPedido = String(fd.get("hasta") ?? "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(desdePedido)) rango.desde = desdePedido;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(hastaPedido)) rango.hasta = hastaPedido;
+  if (rango.desde && rango.hasta && rango.desde > rango.hasta) {
+    return { ok: false, mensaje: "El desde es posterior al hasta." };
+  }
+
+  let leido;
+  try {
+    leido = leerArchivo(archivo.name, await archivo.arrayBuffer());
+  } catch (e) {
+    return {
+      ok: false,
+      mensaje: e instanceof Error ? e.message : "No pude leer el archivo.",
+    };
+  }
+
+  const resuelta = resolverCuenta(await listarCuentas(), leido.detectada);
+  if (!resuelta.ok) return { ok: false, mensaje: resuelta.motivo };
+  const cuenta = resuelta.cuenta;
+
+  if (!cuenta.activa) {
+    return {
+      ok: false,
+      mensaje: `La cuenta ${cuenta.nombre} está desactivada. Reactívala en Cuentas si quieres volver a cargarle publicaciones.`,
+    };
+  }
+
+  const conversion = aFilasRegistro(leido.publicaciones, cuenta, rango);
+  if (conversion.filas.length === 0) {
+    const motivo =
+      conversion.fueraDeRango > 0
+        ? "Todas sus publicaciones quedaron fuera del rango de fechas que pediste."
+        : "No trae ninguna publicación con fecha.";
+    return {
+      ok: false,
+      mensaje: `${motivo} Meses que trae el archivo: ${leido.meses.join(", ") || "ninguno"}.`,
+    };
+  }
+
+  const supabase = await supabaseServidor();
+
+  /*
+   * Qué publicaciones de este archivo YA están cargadas. La identidad es el
+   * id_externo dentro de la cuenta: el mismo video subido a TikTok y a
+   * Instagram tiene dos identificadores distintos y son dos filas, que es
+   * justamente lo que el catastro tiene que mostrar por separado.
+   */
+  const ids = conversion.filas
+    .map((f) => f.id_externo)
+    .filter((v): v is string => v !== null);
+
+  const yaEstan = new Map<string, { id: string } & Partial<FilaRegistroImportada>>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase
+      .from("registros")
+      .select(
+        "id, id_externo, categoria, tipo, hashtag, alcance, visualizaciones, interacciones, nuevos_seguidores, titulo_contenido, enlace",
+      )
+      .eq("cuenta_id", cuenta.id)
+      .in("id_externo", ids.slice(i, i + 200));
+
+    if (error) return { ok: false, mensaje: error.message };
+    for (const fila of data ?? []) {
+      const r = fila as { id: string; id_externo: string | null };
+      if (r.id_externo) yaEstan.set(r.id_externo, r as never);
+    }
+  }
+
+  const nuevas: Record<string, unknown>[] = [];
+  const existentes: Record<string, unknown>[] = [];
+
+  for (const fila of conversion.filas) {
+    const previa = fila.id_externo ? yaEstan.get(fila.id_externo) : undefined;
+    if (previa) {
+      existentes.push({ id: previa.id, ...fusionarConExistente(previa, fila) });
+    } else {
+      nuevas.push({ ...fila, created_by: usuarioId });
+    }
+  }
+
+  // En tandas, para no chocar con el límite de tamaño de la petición.
+  for (let i = 0; i < nuevas.length; i += 200) {
+    const { error } = await supabase.from("registros").insert(nuevas.slice(i, i + 200));
+    if (error) {
+      return {
+        ok: false,
+        mensaje: `Se cortó en la fila ${i + 1} de ${nuevas.length}: ${error.message}`,
+      };
+    }
+  }
+
+  for (let i = 0; i < existentes.length; i += 200) {
+    const { error } = await supabase
+      .from("registros")
+      .upsert(existentes.slice(i, i + 200), { onConflict: "id" });
+    if (error) return { ok: false, mensaje: error.message };
+  }
+
+  revalidarVistasDeRegistros();
+
+  const extremos = rangoDe(conversion.filas)!;
+  const hashtags = contarHashtags(conversion.filas);
+  const series = hashtags.filter((h) => h.hashtag !== null).length;
+
+  return {
+    ok: true,
+    mensaje:
+      existentes.length === 0
+        ? `Se cargaron ${nuevas.length} publicaciones de ${cuenta.nombre}.`
+        : `Se cargaron ${nuevas.length} publicaciones nuevas de ${cuenta.nombre} y se actualizaron ${existentes.length} que ya estaban.`,
+    fecha: extremos.hasta,
+    detalle: {
+      cuenta: cuenta.nombre,
+      red: cuenta.red,
+      usuarioArchivo: leido.cuenta,
+      fuente: leido.fuente,
+      insertadas: nuevas.length,
+      actualizadas: existentes.length,
+      sinFecha: conversion.sinFecha,
+      fueraDeRango: conversion.fueraDeRango,
+      repetidasEnArchivo: conversion.repetidasEnArchivo,
+      desde: extremos.desde,
+      hasta: extremos.hasta,
+      hashtags,
+      advertencias: [
+        ...leido.advertencias,
+        ...(series === 0
+          ? [
+              "Ninguna de estas publicaciones trae hashtag en su texto, así que el catastro semanal las agrupará todas juntas. Puedes ponérselo a mano desde la tabla.",
+            ]
+          : []),
+      ],
     },
   };
 }

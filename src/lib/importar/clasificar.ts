@@ -97,3 +97,30 @@ export function clasificarInstagram(
 ): Clasificacion {
   return cuenta === "dltsports" ? clasificarDLT(caption) : clasificarDBF(caption);
 }
+
+/** Las dos cuentas para las que existe una regla de clasificación. */
+const CUENTAS_CLASIFICABLES = new Set(["dltsports", "debuenafuente.dlt"]);
+
+export function esCuentaClasificable(
+  usuario: string | null,
+): usuario is "dltsports" | "debuenafuente.dlt" {
+  return usuario !== null && CUENTAS_CLASIFICABLES.has(usuario);
+}
+
+/**
+ * Clasifica si se puede, y si no, devuelve null.
+ *
+ * Reactivo/Normal es una regla de @dltsports y @debuenafuente.dlt: la lista de
+ * hashtags reactivos y las palabras clave salen de cómo trabajan esas dos
+ * cuentas. Aplicárselas a la cuenta de un influencer sería inventar una
+ * clasificación, así que ahí el tipo queda vacío y se puede poner a mano.
+ *
+ * El hashtag es otra cosa: es el corte del catastro semanal y se extrae
+ * siempre, venga de la cuenta que venga.
+ */
+export function clasificarSiSePuede(
+  usuario: string | null,
+  caption: string | null,
+): Clasificacion | null {
+  return esCuentaClasificable(usuario) ? clasificarInstagram(usuario, caption) : null;
+}

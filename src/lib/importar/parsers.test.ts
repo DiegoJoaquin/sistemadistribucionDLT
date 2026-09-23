@@ -38,9 +38,9 @@ describir("Meta Business Suite CSV — Instagram DBF", () => {
     r = leer("dbfMeta");
   });
 
-  it("detecta la cuenta y la plataforma desde el archivo", () => {
+  it("detecta la cuenta y la red desde el archivo", () => {
     expect(r.cuenta).toBe("debuenafuente.dlt");
-    expect(r.plataforma).toBe("Instagram DBF");
+    expect(r.detectada).toEqual({ usuario: "debuenafuente.dlt", red: "Instagram" });
     expect(r.fuente).toBe("meta");
   });
 
@@ -83,9 +83,9 @@ describir("Iconosquare XLSX — Instagram DLT", () => {
     r = leer("dltIconosquare");
   });
 
-  it("detecta la cuenta y la plataforma desde las celdas B1 y B2", () => {
+  it("detecta la cuenta y la red desde las celdas B1 y B2", () => {
     expect(r.cuenta).toBe("dltsports");
-    expect(r.plataforma).toBe("Instagram DLT");
+    expect(r.detectada).toEqual({ usuario: "dltsports", red: "Instagram" });
     expect(r.fuente).toBe("iconosquare");
   });
 
@@ -133,8 +133,8 @@ describir("TikTok XLSX", () => {
     r = leer("tiktok");
   });
 
-  it("detecta la plataforma y etiqueta todo como Video, su única categoría", () => {
-    expect(r.plataforma).toBe("TikTok");
+  it("detecta la red y etiqueta todo como Video, su única categoría", () => {
+    expect(r.detectada.red).toBe("TikTok");
     expect(soloAgosto(r).every((p) => p.formato === "Video")).toBe(true);
     // Reactivo/Normal es solo de Instagram.
     expect(soloAgosto(r).every((p) => p.tipo === null)).toBe(true);

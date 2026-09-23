@@ -46,7 +46,7 @@ async function insertar(p: PublicacionImportada) {
        nuevos_seguidores, interacciones, enlace, id_externo, fuente)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
     [
-      LB, p.plataforma, p.publicado_en, p.formato, p.tipo, p.tipo_auto,
+      LB, 'Instagram DLT', p.publicado_en, p.formato, p.tipo, p.tipo_auto,
       p.serie_hashtag, p.caption, p.duracion_s, p.visualizaciones, p.alcance,
       p.me_gusta, p.comentarios, p.compartidos, p.guardados, p.favoritos,
       p.nuevos_seguidores, p.interacciones, p.enlace, p.id_externo, p.fuente,

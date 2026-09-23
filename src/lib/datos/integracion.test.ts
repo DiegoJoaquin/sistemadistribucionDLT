@@ -33,6 +33,16 @@ import { mesDe } from "@/lib/importar/util";
 const FUENTES: NombreEjemplo[] = ["dbfMeta", "dltIconosquare", "tiktok", "youtube"];
 const describir = hayEjemplos(...FUENTES) ? describe : describe.skip;
 
+/**
+ * El nombre de la cuenta original, para poder seguir agrupando por la columna
+ * heredada. Los lectores ya no lo saben: entregan el @usuario y la red, y a qué
+ * cuenta corresponde lo resuelve la aplicación contra las cuentas cargadas.
+ */
+function plataformaDe(d: { usuario: string | null; red: Red }): string {
+  if (d.red !== "Instagram") return d.red;
+  return d.usuario === "dltsports" ? "Instagram DLT" : "Instagram DBF";
+}
+
 const LB = "11111111-1111-1111-1111-111111111111";
 const USUARIO = "22222222-2222-2222-2222-222222222222";
 
@@ -64,7 +74,7 @@ beforeAll(async () => {
            nuevos_seguidores, interacciones, enlace, id_externo, fuente)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
         [
-          LB, p.plataforma, p.publicado_en, p.formato, p.tipo, p.tipo_auto,
+          LB, plataformaDe(leido.detectada), p.publicado_en, p.formato, p.tipo, p.tipo_auto,
           p.serie_hashtag, p.caption, p.duracion_s, p.visualizaciones, p.alcance,
           p.me_gusta, p.comentarios, p.compartidos, p.guardados, p.favoritos,
           p.nuevos_seguidores, p.interacciones, p.enlace, p.id_externo, p.fuente,
