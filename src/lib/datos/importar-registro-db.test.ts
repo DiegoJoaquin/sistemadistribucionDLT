@@ -20,7 +20,7 @@ import {
 } from "@/lib/importar/a-registro";
 import type { Cuenta } from "@/lib/dominio/redes";
 import type { PublicacionImportada } from "@/lib/importar/tipos";
-import { baseDePrueba } from "./base-de-prueba";
+import { baseDePrueba, PERMISOS_AUTHENTICATED } from "./base-de-prueba";
 
 const USUARIO = "22222222-2222-4222-8222-222222222222";
 
@@ -123,9 +123,14 @@ beforeAll(async () => {
     uid: USUARIO,
     usuario: { id: USUARIO, email: "cata@dltsports.cl", nombre: "Catalina" },
   });
+  // Después de las migraciones: el grant cubre las tablas que ya existen.
+  // Sin esto, `set role authenticated` no puede ni leer la tabla y las
+  // pruebas de RLS fallarían por el motivo equivocado.
+  await db.exec(PERMISOS_AUTHENTICATED);
 }, 120_000);
 
 beforeEach(async () => {
+  await db.exec("reset role;");
   await db.exec(
     `delete from public.registros;
      delete from public.cuentas where es_influencer;`,
@@ -217,6 +222,71 @@ describe("importar publicaciones al registro", () => {
     expect(Number(r.rows[0].n)).toBe(1);
     expect(r.rows[0].alcance).toBe(9_000);
     expect(r.rows[0].nuevos_seguidores).toBe(8);
+  });
+
+  /*
+   * El error que rompió la REimportación de julio.
+   *
+   * La política de escritura de `registros` exige `created_by = auth.uid()`
+   * (§2: la trazabilidad no se falsea). Un `upsert` en Postgres es
+   * `INSERT ... ON CONFLICT`, así que pasa por esa política aunque termine
+   * actualizando — y las filas que ya estaban no llevan `created_by`, porque su
+   * autor es quien las cargó la primera vez. Resultado: las 200 publicaciones
+   * ya cargadas se rechazaban con "new row violates row-level security policy".
+   *
+   * La prueba anterior no lo detectó porque actualizaba con SQL directo y como
+   * superusuario, sin RLS. Esta corre como usuario del equipo.
+   */
+  describe("actualizar lo ya cargado, con RLS activo", () => {
+    // `baseDePrueba` fija auth.uid() al USUARIO, así que basta con cambiar
+    // de rol para que las políticas empiecen a aplicarse.
+    const comoEquipo = () => db.exec("set role authenticated;");
+
+    it("un upsert por id se rechaza: es la vía que estaba mal", async () => {
+      const diego = await crearCuenta("DiegoAT", "@diegoat", "Instagram");
+      await insertar(aFilaRegistro(pub(), diego)!);
+      const { rows } = await db.query<{ id: string }>(
+        `select id from public.registros`,
+      );
+
+      await comoEquipo();
+      await expect(
+        db.query(
+          `insert into public.registros (id, fecha, cuenta_id, categoria, publicaciones, alcance)
+           values ($1, '2026-09-15', $2, 'Reel', 1, 99999)
+           on conflict (id) do update set alcance = excluded.alcance`,
+          [rows[0].id, diego.id],
+        ),
+      ).rejects.toThrow(/row-level security/);
+    });
+
+    it("un UPDATE sí se permite y conserva al autor original", async () => {
+      const diego = await crearCuenta("DiegoAT", "@diegoat", "Instagram");
+      await insertar(aFilaRegistro(pub({ alcance: 1_000 }), diego)!);
+
+      await comoEquipo();
+      await db.query(`update public.registros set alcance = 99999`);
+
+      await db.exec("reset role;");
+      const r = await db.query<{ alcance: number; created_by: string }>(
+        `select alcance, created_by from public.registros`,
+      );
+      expect(r.rows[0].alcance).toBe(99999);
+      // §2 — quién la cargó no cambia porque alguien la reimporte.
+      expect(r.rows[0].created_by).toBe(USUARIO);
+    });
+
+    it("insertar sin created_by también se rechaza", async () => {
+      const diego = await crearCuenta("DiegoAT", "@diegoat", "Instagram");
+      await comoEquipo();
+      await expect(
+        db.query(
+          `insert into public.registros (fecha, cuenta_id, categoria, publicaciones)
+           values ('2026-09-15', $1, 'Reel', 1)`,
+          [diego.id],
+        ),
+      ).rejects.toThrow(/row-level security/);
+    });
   });
 
   it("el índice único impide dos filas con el mismo id_externo en la cuenta", async () => {

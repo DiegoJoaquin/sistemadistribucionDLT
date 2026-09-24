@@ -439,39 +439,52 @@ export interface ResultadoImportRegistro extends Resultado {
   detalle?: DetalleImportRegistro;
 }
 
-/** Cuántas filas van por petición: el límite es el tamaño del cuerpo. */
+/** Cuántas filas van por petición al insertar: el límite es el tamaño del cuerpo. */
 const TANDA_ESCRITURA = 200;
+
+/**
+ * Cuántas actualizaciones se piden a la vez.
+ *
+ * PostgREST no puede actualizar muchas filas con valores distintos en una sola
+ * petición, así que va una por fila. En serie, doscientas actualizaciones
+ * tardarían más de lo que una función de Vercel puede esperar; de a veinte en
+ * paralelo el lote entero se resuelve en un par de segundos.
+ */
+const ACTUALIZACIONES_EN_PARALELO = 20;
 
 type SupabaseServidor = Awaited<ReturnType<typeof supabaseServidor>>;
 
+interface ResultadoEscritura {
+  escritas: number;
+  fallidas: { titulo: string; motivo: string }[];
+}
+
+/** Con qué nombre se reporta una fila que no se pudo escribir. */
+function rotularFila(fila: Record<string, unknown>): string {
+  const titulo = fila.titulo_contenido;
+  if (typeof titulo === "string" && titulo) return titulo.slice(0, 60);
+  return String(fila.id_externo ?? fila.fecha ?? "sin título");
+}
+
 /**
- * Escribe en tandas y, si una tanda falla, reintenta fila por fila.
+ * Inserta en tandas y, si una tanda falla, reintenta fila por fila.
  *
  * El reintento no es un lujo. Antes, un solo caracter inválido en un caption
  * tumbaba la tanda entera: de 398 publicaciones entraban 200 y se perdían 198,
  * con un mensaje —"se cortó en la fila 201"— que no dejaba claro que las
  * primeras 200 sí habían quedado. Ahora falla solo la fila que está mal y se
  * dice cuál.
- *
- * La reimportación es idempotente por (cuenta, id_externo), así que volver a
- * subir el archivo completa lo que falte sin duplicar nada.
  */
-async function escribirEnTandas(
+async function insertarEnTandas(
   supabase: SupabaseServidor,
   filas: readonly Record<string, unknown>[],
-  modo: "insertar" | "actualizar",
-): Promise<{ escritas: number; fallidas: { titulo: string; motivo: string }[] }> {
-  const escribir = (lote: readonly Record<string, unknown>[]) =>
-    modo === "insertar"
-      ? supabase.from("registros").insert(lote)
-      : supabase.from("registros").upsert(lote, { onConflict: "id" });
-
+): Promise<ResultadoEscritura> {
   let escritas = 0;
-  const fallidas: { titulo: string; motivo: string }[] = [];
+  const fallidas: ResultadoEscritura["fallidas"] = [];
 
   for (let i = 0; i < filas.length; i += TANDA_ESCRITURA) {
     const lote = filas.slice(i, i + TANDA_ESCRITURA);
-    const { error } = await escribir(lote);
+    const { error } = await supabase.from("registros").insert(lote);
 
     if (!error) {
       escritas += lote.length;
@@ -480,18 +493,48 @@ async function escribirEnTandas(
 
     // La tanda falló: se reintenta una por una para aislar la culpable.
     for (const fila of lote) {
-      const { error: suyo } = await escribir([fila]);
-      if (suyo) {
-        fallidas.push({
-          titulo:
-            typeof fila.titulo_contenido === "string" && fila.titulo_contenido
-              ? fila.titulo_contenido.slice(0, 60)
-              : String(fila.id_externo ?? fila.fecha ?? "sin título"),
-          motivo: suyo.message,
-        });
-      } else {
-        escritas += 1;
-      }
+      const { error: suyo } = await supabase.from("registros").insert([fila]);
+      if (suyo) fallidas.push({ titulo: rotularFila(fila), motivo: suyo.message });
+      else escritas += 1;
+    }
+  }
+
+  return { escritas, fallidas };
+}
+
+/**
+ * Actualiza las publicaciones que ya estaban cargadas.
+ *
+ * Va con UPDATE y no con `upsert`, y eso es la corrección de un error que
+ * rompió la reimportación de julio. Un `upsert` en Postgres es
+ * `INSERT ... ON CONFLICT`, y TODO insert tiene que cumplir la política de
+ * escritura de `registros`, que exige `created_by = auth.uid()`. Estas filas no
+ * llevan `created_by` —su autor es quien las cargó la primera vez— así que las
+ * doscientas se rechazaban con "new row violates row-level security policy".
+ *
+ * Con UPDATE, además, el autor original queda intacto: la trazabilidad de §2
+ * dice quién cargó cada publicación, no quién la reimportó.
+ */
+async function actualizarEnParalelo(
+  supabase: SupabaseServidor,
+  filas: readonly { id: string; datos: Record<string, unknown> }[],
+): Promise<ResultadoEscritura> {
+  let escritas = 0;
+  const fallidas: ResultadoEscritura["fallidas"] = [];
+
+  for (let i = 0; i < filas.length; i += ACTUALIZACIONES_EN_PARALELO) {
+    const lote = filas.slice(i, i + ACTUALIZACIONES_EN_PARALELO);
+
+    const resultados = await Promise.all(
+      lote.map(async ({ id, datos }) => {
+        const { error } = await supabase.from("registros").update(datos).eq("id", id);
+        return { datos, error };
+      }),
+    );
+
+    for (const { datos, error } of resultados) {
+      if (error) fallidas.push({ titulo: rotularFila(datos), motivo: error.message });
+      else escritas += 1;
     }
   }
 
@@ -593,19 +636,26 @@ export async function importarPublicaciones(
   }
 
   const nuevas: Record<string, unknown>[] = [];
-  const existentes: Record<string, unknown>[] = [];
+  const existentes: { id: string; datos: Record<string, unknown> }[] = [];
 
   for (const fila of conversion.filas) {
     const previa = fila.id_externo ? yaEstan.get(fila.id_externo) : undefined;
     if (previa) {
-      existentes.push({ id: previa.id, ...fusionarConExistente(previa, fila) });
+      /*
+       * `created_by` no va: la fila ya tiene autor y es quien la cargó la
+       * primera vez. Mandarlo reasignaría la autoría del registro.
+       */
+      existentes.push({
+        id: previa.id,
+        datos: { ...fusionarConExistente(previa, fila) },
+      });
     } else {
       nuevas.push({ ...fila, created_by: usuarioId });
     }
   }
 
-  const puestas = await escribirEnTandas(supabase, nuevas, "insertar");
-  const refrescadas = await escribirEnTandas(supabase, existentes, "actualizar");
+  const puestas = await insertarEnTandas(supabase, nuevas);
+  const refrescadas = await actualizarEnParalelo(supabase, existentes);
   const fallidas = [...puestas.fallidas, ...refrescadas.fallidas];
 
   revalidarVistasDeRegistros();
@@ -789,7 +839,7 @@ export async function importarRegistroHistorico(
       created_by: usuarioId,
     }));
 
-    const puestas = await escribirEnTandas(supabase, filas, "insertar");
+    const puestas = await insertarEnTandas(supabase, filas);
     if (puestas.fallidas.length > 0) {
       revalidarVistasDeRegistros();
       return {
