@@ -1,8 +1,11 @@
 import Link from "next/link";
+import { BotonEnviarReporte } from "@/componentes/BotonEnviarReporte";
 import { NavegacionSemana } from "@/componentes/NavegacionSemana";
 import { VistaPreviaReporte } from "@/componentes/VistaPreviaReporte";
 import { Nota, Vacio } from "@/componentes/ui";
-import { catastroDelPeriodo } from "@/lib/datos/consultas";
+import { faltantesCorreo } from "@/lib/correo/entorno";
+import { parsearDestinatarios } from "@/lib/correo/direcciones";
+import { catastroDelPeriodo, enviosDeSemana } from "@/lib/datos/consultas";
 import { hoyISO, rotularSemana, semanaDe } from "@/lib/dominio/formato";
 import {
   construirReporteSemanal,
@@ -22,10 +25,19 @@ export default async function PaginaReporte(props: PageProps<"/reporte">) {
   const sp = await props.searchParams;
   const semana = semanaDe(primero(sp.semana) ?? hoyISO());
 
-  const catastro = await catastroDelPeriodo(semana.desde, semana.hasta);
+  const [catastro, envios] = await Promise.all([
+    catastroDelPeriodo(semana.desde, semana.hasta),
+    enviosDeSemana(semana.desde),
+  ]);
+
   const reporte = construirReporteSemanal(catastro);
   const html = htmlSemanal(reporte, { urlBase: urlPublica() });
   const texto = textoSemanal(reporte);
+
+  const faltantes = faltantesCorreo();
+  const destinatarios = parsearDestinatarios(
+    process.env.REPORTE_DESTINATARIOS,
+  ).validos;
 
   return (
     <div className="space-y-5">
@@ -50,8 +62,7 @@ export default async function PaginaReporte(props: PageProps<"/reporte">) {
 
       <Nota>
         El reporte se genera solo con los datos cargados: ya no tiene las
-        preguntas de texto libre. Revísalo acá y cópialo o descárgalo para
-        pegarlo en el correo — el envío automático todavía no está conectado. El{" "}
+        preguntas de texto libre. El{" "}
         <Link href="/catastro" className="underline underline-offset-2">
           catastro
         </Link>{" "}
@@ -61,6 +72,14 @@ export default async function PaginaReporte(props: PageProps<"/reporte">) {
         </Link>{" "}
         sigue disponible para revisar un día puntual.
       </Nota>
+
+      <BotonEnviarReporte
+        semana={semana.desde}
+        destinatarios={destinatarios}
+        envios={envios}
+        faltantes={faltantes}
+        hayDatos={reporte.hayDatos}
+      />
 
       {!reporte.hayDatos ? (
         <Vacio

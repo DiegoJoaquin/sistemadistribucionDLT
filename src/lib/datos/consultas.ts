@@ -393,6 +393,52 @@ export async function catastroDelPeriodo(
 }
 
 /* ------------------------------------------------------------------ */
+/* Envíos del reporte semanal                                          */
+/* ------------------------------------------------------------------ */
+
+export interface EnvioReporte {
+  id: string;
+  semana: string;
+  destinatarios: string[];
+  asunto: string;
+  id_mensaje: string | null;
+  enviado_en: string;
+  enviado_por: string;
+  /** Quién lo mandó, para poder mostrarlo. */
+  autor: { nombre: string; email: string } | null;
+}
+
+/**
+ * Los envíos de una semana, del más reciente al más antiguo.
+ *
+ * En plural porque puede haberse reenviado: si la primera vez faltaban datos,
+ * interesa ver las dos veces y no solo la última.
+ */
+export async function enviosDeSemana(lunes: string): Promise<EnvioReporte[]> {
+  const supabase = await supabaseServidor();
+  const { data, error } = await supabase
+    .from("envios_reporte")
+    .select(
+      `id, semana, destinatarios, asunto, id_mensaje, enviado_en, enviado_por,
+       autor:perfiles!envios_reporte_enviado_por_fkey ( nombre, email )`,
+    )
+    .eq("semana", lunes)
+    .order("enviado_en", { ascending: false });
+
+  /*
+   * Un error acá no puede voltear la página del reporte: lo más probable es
+   * que falte la migración de `envios_reporte`, y en ese caso conviene poder
+   * seguir viendo y copiando el reporte aunque el historial de envíos no esté.
+   */
+  if (error) {
+    console.error("No pude leer los envíos del reporte:", error.message);
+    return [];
+  }
+
+  return (data ?? []) as unknown as EnvioReporte[];
+}
+
+/* ------------------------------------------------------------------ */
 /* Reporte diario                                                      */
 /* ------------------------------------------------------------------ */
 

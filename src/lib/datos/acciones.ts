@@ -9,8 +9,17 @@ import {
   esquemaReporte,
   primerError,
 } from "./esquemas";
-import { listarCuentas } from "./consultas";
+import { catastroDelPeriodo, listarCuentas } from "./consultas";
+import { destinatariosReporte } from "@/lib/correo/entorno";
+import { enviarCorreo } from "@/lib/correo/enviar";
+import { semanaDe } from "@/lib/dominio/formato";
 import type { Red } from "@/lib/dominio/redes";
+import {
+  construirReporteSemanal,
+  htmlSemanal,
+  textoSemanal,
+} from "@/lib/reporte/semanal";
+import { urlPublica } from "@/lib/supabase/entorno";
 import {
   aFilasRegistro,
   contarHashtags,
@@ -748,6 +757,99 @@ export async function importarRegistroHistorico(
       dias: leido.fechas.length,
     },
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Envío del reporte semanal por correo                                */
+/* ------------------------------------------------------------------ */
+
+export interface ResultadoEnvioReporte extends Resultado {
+  /** Direcciones a las que se mandó, para confirmarlo en pantalla. */
+  destinatarios?: string[];
+}
+
+/**
+ * Manda el reporte semanal por correo.
+ *
+ * El HTML se vuelve a generar acá, en el servidor, a partir de la semana. NO se
+ * acepta el HTML del formulario, aunque la página ya lo tenga armado: si se
+ * aceptara, cualquiera con sesión podría mandar el contenido que quisiera desde
+ * la dirección de correo de la empresa. Lo único que viaja del navegador es qué
+ * semana enviar.
+ */
+export async function enviarReporteSemanal(
+  _previo: ResultadoEnvioReporte | null,
+  fd: FormData,
+): Promise<ResultadoEnvioReporte> {
+  const { usuarioId } = await exigirSesion();
+
+  const pedida = String(fd.get("semana") ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(pedida)) {
+    return { ok: false, mensaje: "No reconocí la semana que hay que enviar." };
+  }
+  // Se normaliza al lunes: es la clave con la que se registra el envío.
+  const semana = semanaDe(pedida);
+
+  let para: string[];
+  try {
+    para = destinatariosReporte();
+  } catch (e) {
+    return { ok: false, mensaje: e instanceof Error ? e.message : "Sin destinatarios." };
+  }
+
+  const catastro = await catastroDelPeriodo(semana.desde, semana.hasta);
+  const reporte = construirReporteSemanal(catastro);
+
+  /*
+   * Un correo vacío es peor que no mandar nada: el jefe abre un reporte que
+   * dice que no se publicó nada y hay que explicarle que en realidad faltaba
+   * cargar los datos.
+   */
+  if (!reporte.hayDatos) {
+    return {
+      ok: false,
+      mensaje:
+        "Esta semana no tiene publicaciones cargadas, así que el correo saldría vacío. Carga las exportaciones antes de enviarlo.",
+    };
+  }
+
+  const asunto = `Catastro semanal de distribución · ${reporte.periodo}`;
+
+  const envio = await enviarCorreo({
+    para,
+    asunto,
+    html: htmlSemanal(reporte, { urlBase: urlPublica() }),
+    texto: textoSemanal(reporte),
+  });
+
+  if (!envio.ok) return { ok: false, mensaje: envio.mensaje };
+
+  /*
+   * El correo ya salió. Si el registro falla, el envío NO se deshace: se avisa
+   * y se sigue. Devolver un error acá haría que alguien lo mande de nuevo
+   * pensando que no salió, y los jefes recibirían el reporte dos veces.
+   */
+  const supabase = await supabaseServidor();
+  const { error } = await supabase.from("envios_reporte").insert({
+    semana: semana.desde,
+    destinatarios: para,
+    asunto,
+    id_mensaje: envio.id ?? null,
+    enviado_por: usuarioId,
+  });
+
+  revalidatePath("/reporte");
+
+  if (error) {
+    console.error("El correo salió pero no pude registrarlo:", error.message);
+    return {
+      ok: true,
+      destinatarios: para,
+      mensaje: `${envio.mensaje} No pude dejar constancia del envío en la base, así que no va a aparecer en el historial.`,
+    };
+  }
+
+  return { ok: true, mensaje: envio.mensaje, destinatarios: para };
 }
 
 export async function activarLineaBase(fd: FormData): Promise<void> {
