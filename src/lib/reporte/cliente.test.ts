@@ -223,6 +223,26 @@ describe("htmlCliente", () => {
     expect(htmlCliente(reporte([fila()]))).toContain("cae dentro del período");
   });
 
+  /*
+   * El informe se manda como PDF, y el PDF sale de la impresión del navegador.
+   * Sin estas reglas los cortes de página parten un bloque de cuenta al medio,
+   * y sin `print-color-adjust` el navegador descarta los fondos: los badges de
+   * variación quedarían grises y se perdería lo que hace legible el informe.
+   */
+  it("trae los estilos de impresión, que es de donde sale el PDF", () => {
+    const html = htmlCliente(reporte([fila()]));
+    expect(html).toContain("@media print");
+    expect(html).toContain("print-color-adjust:exact");
+    expect(html).toContain("break-inside:avoid");
+    expect(html).toContain("@page{margin:14mm}");
+  });
+
+  it("el título del documento sirve como nombre del PDF", () => {
+    // Es el nombre que propone el diálogo de impresión.
+    const html = htmlCliente(reporte([fila()]));
+    expect(html).toContain("<title>Informe Sparta · 01-01-2026 al 30-09-2026</title>");
+  });
+
   it("aclara que las publicaciones sin hashtag no entran", () => {
     const html = htmlCliente(reporte([fila()]));
     expect(html).toContain("Las publicaciones sin hashtag no entran");

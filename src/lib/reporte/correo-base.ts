@@ -44,6 +44,28 @@ export const HOJA = `
     .tit{margin:0 0 8px;font-size:14px;font-weight:700;color:#1a1a18}
     .nota{margin:0;font-size:14px;color:#8a8a82}
     .aviso{margin:10px 0 0;padding:10px 12px;border:1px solid #f0d9a8;border-radius:8px;background:#fdf6e7;font-size:13px;color:#6b4e12}
+
+    /*
+     * Para guardarlo como PDF.
+     *
+     * Un informe que se le manda a un cliente se imprime, y sin esto los
+     * cortes de página caen en cualquier parte: un bloque de cuenta partido
+     * entre dos hojas, o una fila de tabla a la mitad. La regla break-inside
+     * avoid mantiene junto cada bloque y cada fila.
+     *
+     * print-color-adjust: exact es imprescindible: por defecto el navegador
+     * descarta los fondos al imprimir, y ahí los badges de variación quedarían
+     * como texto gris sobre blanco — se perdería justamente lo que hace legible
+     * el informe de un vistazo.
+     */
+    @media print {
+      body{background:#fff}
+      .m{max-width:none}
+      .card,tr,.p{break-inside:avoid;page-break-inside:avoid}
+      .h2{break-after:avoid;page-break-after:avoid}
+      *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    }
+    @page{margin:14mm}
 `;
 
 export const esc = (s: string) =>
