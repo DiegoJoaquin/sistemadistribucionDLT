@@ -21,6 +21,11 @@ import {
   type SerieCruzada,
   seriesCruzadas,
 } from "@/lib/dominio/catastro";
+import {
+  construirInforme,
+  type FilaInforme,
+  type Informe,
+} from "@/lib/dominio/informe";
 import { type Categoria } from "@/lib/dominio/categorias";
 import type { Plataforma } from "@/lib/dominio/plataformas";
 import {
@@ -88,6 +93,55 @@ export async function listarRegistros(
 
 export async function registrosDelDia(fecha: string): Promise<RegistroConAutor[]> {
   return listarRegistros({ desde: fecha, hasta: fecha });
+}
+
+/** Cuántas filas se piden por vuelta al paginar. */
+const TANDA = 1_000;
+
+/**
+ * TODOS los registros del rango, paginando.
+ *
+ * `listarRegistros` tiene un tope de 500 filas, que alcanza de sobra para un
+ * día o una semana. Para un informe de varios meses no: cortaría el conjunto
+ * en silencio y todos los promedios saldrían calculados sobre una parte de los
+ * datos, sin ningún aviso. Es exactamente la clase de error que este proyecto
+ * viene arrastrando desde el Excel.
+ *
+ * Se pagina en vez de pedir un límite enorme porque PostgREST puede tener su
+ * propio techo de filas por respuesta, y entonces el límite grande tampoco
+ * serviría.
+ */
+export async function listarRegistrosDelRango(
+  desde: string,
+  hasta: string,
+): Promise<RegistroConAutor[]> {
+  const supabase = await supabaseServidor();
+  const todos: RegistroConAutor[] = [];
+
+  for (let inicio = 0; ; inicio += TANDA) {
+    const { data, error } = await supabase
+      .from("registros")
+      .select(SELECT_REGISTRO)
+      .gte("fecha", desde)
+      .lte("fecha", hasta)
+      .order("fecha", { ascending: true })
+      .order("id", { ascending: true })
+      .range(inicio, inicio + TANDA - 1);
+
+    if (error) throw new Error(`No pude leer los registros: ${error.message}`);
+
+    const tanda = (data ?? []) as unknown as RegistroConAutor[];
+    todos.push(...tanda);
+
+    // Menos filas que la tanda significa que era la última.
+    if (tanda.length < TANDA) return todos;
+
+    /*
+     * Tope de seguridad. Con un millón de filas algo está muy mal y es mejor
+     * cortar que quedarse pidiendo tandas para siempre.
+     */
+    if (todos.length >= 200_000) return todos;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -389,6 +443,151 @@ export async function catastroDelPeriodo(
     publicaciones: filas.reduce((n, f) => n + f.publicaciones, 0),
     series,
     hayAlgo: filas.length > 0,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Clientes e informes por cliente                                     */
+/* ------------------------------------------------------------------ */
+
+export interface ClienteRow {
+  id: string;
+  nombre: string;
+  notas: string | null;
+  activo: boolean;
+  creado_en: string;
+}
+
+export interface ClienteConHashtags extends ClienteRow {
+  hashtags: string[];
+}
+
+/** Todos los clientes con su lista de hashtags, ordenados por nombre. */
+export async function listarClientes(): Promise<ClienteConHashtags[]> {
+  const supabase = await supabaseServidor();
+
+  const [clientes, relaciones] = await Promise.all([
+    supabase.from("clientes").select("*").order("nombre"),
+    supabase.from("cliente_hashtags").select("cliente_id, hashtag"),
+  ]);
+
+  if (clientes.error) {
+    throw new Error(`No pude leer los clientes: ${clientes.error.message}`);
+  }
+  if (relaciones.error) {
+    throw new Error(`No pude leer los hashtags: ${relaciones.error.message}`);
+  }
+
+  const porCliente = new Map<string, string[]>();
+  for (const r of (relaciones.data ?? []) as { cliente_id: string; hashtag: string }[]) {
+    const lista = porCliente.get(r.cliente_id);
+    if (lista) lista.push(r.hashtag);
+    else porCliente.set(r.cliente_id, [r.hashtag]);
+  }
+
+  return ((clientes.data ?? []) as ClienteRow[]).map((c) => ({
+    ...c,
+    hashtags: (porCliente.get(c.id) ?? []).sort((a, b) => a.localeCompare(b, "es")),
+  }));
+}
+
+export async function clientePorId(id: string): Promise<ClienteConHashtags | null> {
+  return (await listarClientes()).find((c) => c.id === id) ?? null;
+}
+
+/**
+ * Hashtags que aparecen en los registros y no están en la lista de ningún
+ * cliente.
+ *
+ * Es el contrapeso de haber elegido listas explícitas en vez de patrones: una
+ * serie nueva del cliente no entra sola al informe, así que hay que poder ver
+ * qué quedó afuera y decidir. Sin esto, un informe incompleto no se nota.
+ */
+export async function hashtagsSinCliente(
+  desde?: string,
+  hasta?: string,
+): Promise<{ hashtag: string; publicaciones: number }[]> {
+  const supabase = await supabaseServidor();
+
+  let q = supabase.from("registros").select("hashtag, publicaciones").not("hashtag", "is", null);
+  if (desde) q = q.gte("fecha", desde);
+  if (hasta) q = q.lte("fecha", hasta);
+
+  const [registros, asignados] = await Promise.all([
+    q.limit(20_000),
+    supabase.from("cliente_hashtags").select("hashtag"),
+  ]);
+
+  if (registros.error) {
+    throw new Error(`No pude leer los hashtags: ${registros.error.message}`);
+  }
+
+  const yaEstan = new Set(
+    ((asignados.data ?? []) as { hashtag: string }[]).map((r) => r.hashtag),
+  );
+
+  const conteo = new Map<string, number>();
+  for (const r of (registros.data ?? []) as {
+    hashtag: string;
+    publicaciones: number;
+  }[]) {
+    if (yaEstan.has(r.hashtag)) continue;
+    conteo.set(r.hashtag, (conteo.get(r.hashtag) ?? 0) + r.publicaciones);
+  }
+
+  return [...conteo.entries()]
+    .map(([hashtag, publicaciones]) => ({ hashtag, publicaciones }))
+    .sort((a, b) => b.publicaciones - a.publicaciones || a.hashtag.localeCompare(b.hashtag, "es"));
+}
+
+function aFilaInforme(r: RegistroConAutor, cuenta: Cuenta): FilaInforme {
+  return { ...aFilaCatastro(r, cuenta), fecha: r.fecha };
+}
+
+/**
+ * El informe de un cliente en un período.
+ *
+ * Las comparaciones salen de la línea base activa, igual que en todo el resto
+ * de la aplicación: cada serie contra su propio promedio histórico y contra el
+ * promedio total de la cuenta donde se publicó.
+ */
+export async function informeDeCliente(
+  cliente: ClienteConHashtags,
+  desde: string,
+  hasta: string,
+): Promise<{ informe: Informe; base: LineaBaseRow | null }> {
+  const [registros, base, cuentas] = await Promise.all([
+    listarRegistrosDelRango(desde, hasta),
+    lineaBaseActiva(),
+    listarCuentas(),
+  ]);
+
+  const [porHashtag, porCategoria] = base
+    ? await Promise.all([promediosPorHashtag(base.id), promediosDeLineaBase(base.id)])
+    : [new Map() as MapaBase, new Map() as MapaBase];
+
+  const porCuenta: MapaBase = new Map();
+  for (const cuenta of cuentas) {
+    const total = porCategoria.get(claveBase(cuenta.id, null));
+    if (total) porCuenta.set(cuenta.id, total);
+  }
+
+  const indice = cuentasPorId(cuentas);
+  const filas: FilaInforme[] = registros.flatMap((r) => {
+    const cuenta = indice.get(r.cuenta_id);
+    return cuenta ? [aFilaInforme(r, cuenta)] : [];
+  });
+
+  return {
+    informe: construirInforme(
+      cliente.nombre,
+      cliente.hashtags,
+      filas,
+      cuentas,
+      { desde, hasta },
+      { porHashtag, porCuenta },
+    ),
+    base,
   };
 }
 

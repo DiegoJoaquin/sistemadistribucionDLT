@@ -80,6 +80,29 @@ export function promedioPorPublicacion(
   return suma / publicaciones;
 }
 
+/**
+ * Sobre cuántas publicaciones se calculó el promedio de esa métrica.
+ *
+ * Es el divisor real de `promedioPorPublicacion`, y casi nunca coincide con el
+ * total: §9.4, las filas que no traen la métrica quedan fuera del numerador Y
+ * del denominador. Sin exponerlo, un informe que dice "19 publicaciones ·
+ * alcance 41.431" invita a leer ese promedio como si fuera sobre 19, cuando
+ * siete son de YouTube y YouTube no entrega alcance. En un documento que va a
+ * un cliente eso es una cifra mal entendida.
+ */
+export function publicacionesConMetrica(
+  filas: readonly FilaCalculo[],
+  metrica: MetricaBase | MetricaPerfil,
+): number {
+  let publicaciones = 0;
+  for (const fila of filas) {
+    if (fila[metrica] === null || fila[metrica] === undefined) continue;
+    if (!Number.isFinite(fila.publicaciones) || fila.publicaciones <= 0) continue;
+    publicaciones += fila.publicaciones;
+  }
+  return publicaciones;
+}
+
 /** Total de publicaciones del conjunto de filas. */
 export function totalPublicaciones(filas: readonly FilaCalculo[]): number {
   return filas.reduce(

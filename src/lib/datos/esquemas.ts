@@ -193,6 +193,46 @@ export const esquemaCuenta = z.object({
 });
 
 /* ------------------------------------------------------------------ */
+/* Clientes                                                            */
+/* ------------------------------------------------------------------ */
+
+export const esquemaCliente = z.object({
+  nombre: z
+    .string({ message: "Escribe el nombre del cliente." })
+    .trim()
+    .min(2, "El nombre es demasiado corto.")
+    .max(80, "El nombre es demasiado largo."),
+  notas: textoOpcional(1000),
+  activo: z
+    .union([z.literal("on"), z.literal("true"), z.boolean()])
+    .optional()
+    .transform((v) => v === "on" || v === "true" || v === true),
+});
+
+/**
+ * La lista de hashtags de un cliente, como texto libre.
+ *
+ * Se acepta separada por coma, punto y coma, espacio o salto de línea, porque
+ * la lista va a llegar pegada de un correo o de un mensaje y nadie la va a
+ * formatear. Cada uno se normaliza igual que `registros.hashtag`: si no, el
+ * informe no encontraría ninguna publicación y saldría vacío sin explicar por
+ * qué.
+ */
+export function parsearListaHashtags(crudo: string | undefined | null): string[] {
+  const vistos = new Set<string>();
+  const lista: string[] = [];
+
+  for (const trozo of (crudo ?? "").split(/[\s,;]+/)) {
+    const h = normalizarHashtag(trozo);
+    if (h === null || vistos.has(h)) continue;
+    vistos.add(h);
+    lista.push(h);
+  }
+
+  return lista;
+}
+
+/* ------------------------------------------------------------------ */
 /* Reporte                                                             */
 /* ------------------------------------------------------------------ */
 

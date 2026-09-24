@@ -4,9 +4,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
   desdeFormData,
+  esquemaCliente,
   esquemaCuenta,
   esquemaRegistroPara,
   esquemaReporte,
+  parsearListaHashtags,
   primerError,
 } from "./esquemas";
 import { catastroDelPeriodo, listarCuentas } from "./consultas";
@@ -989,6 +991,184 @@ export async function alternarCuentaActiva(fd: FormData): Promise<void> {
   await supabase.from("cuentas").update({ activa: activar }).eq("id", id);
 
   revalidarVistasDeCuentas();
+}
+
+/* ------------------------------------------------------------------ */
+/* Clientes                                                            */
+/* ------------------------------------------------------------------ */
+
+function revalidarVistasDeClientes(): void {
+  revalidatePath("/clientes");
+  revalidatePath("/informe");
+}
+
+export interface ResultadoCliente extends Resultado {
+  /** Los hashtags que quedaron guardados, ya normalizados. */
+  hashtags?: string[];
+}
+
+/**
+ * Crea un cliente con su lista de hashtags.
+ *
+ * Las dos cosas van en la misma acción porque un cliente sin hashtags no sirve
+ * para nada: su informe saldría vacío. Guardarlos en dos pasos dejaría clientes
+ * a medio configurar sin que se note.
+ */
+export async function crearCliente(
+  _previo: ResultadoCliente | null,
+  fd: FormData,
+): Promise<ResultadoCliente> {
+  await exigirSesion();
+
+  const parseado = esquemaCliente.safeParse(desdeFormData(fd));
+  if (!parseado.success) return { ok: false, mensaje: primerError(parseado.error) };
+
+  const hashtags = parsearListaHashtags(String(fd.get("hashtags") ?? ""));
+  if (hashtags.length === 0) {
+    return {
+      ok: false,
+      mensaje:
+        "Escribe al menos un hashtag: es lo que define al cliente y sin eso su informe sale vacío.",
+    };
+  }
+
+  const supabase = await supabaseServidor();
+  const { data, error } = await supabase
+    .from("clientes")
+    .insert({ nombre: parseado.data.nombre, notas: parseado.data.notas })
+    .select("id")
+    .single<{ id: string }>();
+
+  if (error || !data) {
+    return { ok: false, mensaje: mensajeDeCliente(error ?? { message: "Sin id." }) };
+  }
+
+  const relaciones = await supabase
+    .from("cliente_hashtags")
+    .insert(hashtags.map((hashtag) => ({ cliente_id: data.id, hashtag })));
+
+  if (relaciones.error) {
+    /*
+     * El cliente quedó creado pero sin hashtags. Se borra para no dejar un
+     * cliente a medias que produzca un informe vacío sin explicación.
+     */
+    await supabase.from("clientes").delete().eq("id", data.id);
+    return { ok: false, mensaje: relaciones.error.message };
+  }
+
+  revalidarVistasDeClientes();
+  return {
+    ok: true,
+    mensaje: `Cliente ${parseado.data.nombre} creado con ${hashtags.length} ${
+      hashtags.length === 1 ? "hashtag" : "hashtags"
+    }.`,
+    hashtags,
+  };
+}
+
+/** El nombre es único en la base; el error crudo de Postgres no se entiende. */
+function mensajeDeCliente(error: { code?: string; message: string }): string {
+  if (error.code === "23505") {
+    return "Ya existe un cliente con ese nombre.";
+  }
+  return error.message;
+}
+
+export async function actualizarCliente(
+  _previo: ResultadoCliente | null,
+  fd: FormData,
+): Promise<ResultadoCliente> {
+  await exigirSesion();
+
+  const id = String(fd.get("id") ?? "");
+  if (!id) return { ok: false, mensaje: "Falta el identificador del cliente." };
+
+  const parseado = esquemaCliente.safeParse(desdeFormData(fd));
+  if (!parseado.success) return { ok: false, mensaje: primerError(parseado.error) };
+
+  const hashtags = parsearListaHashtags(String(fd.get("hashtags") ?? ""));
+  if (hashtags.length === 0) {
+    return {
+      ok: false,
+      mensaje: "Escribe al menos un hashtag: sin eso el informe del cliente sale vacío.",
+    };
+  }
+
+  const supabase = await supabaseServidor();
+  const { error } = await supabase
+    .from("clientes")
+    .update({
+      nombre: parseado.data.nombre,
+      notas: parseado.data.notas,
+      activo: parseado.data.activo,
+    })
+    .eq("id", id);
+
+  if (error) return { ok: false, mensaje: mensajeDeCliente(error) };
+
+  /*
+   * La lista se reemplaza entera: es lo que espera quien edita un campo de
+   * texto con todos los hashtags. Se borran los que salieron y se agregan los
+   * nuevos, en vez de borrar todo e insertar, para que quitar un hashtag de la
+   * lista no pierda su fecha de agregado.
+   */
+  const { data: actuales } = await supabase
+    .from("cliente_hashtags")
+    .select("hashtag")
+    .eq("cliente_id", id);
+
+  const previos = new Set(
+    ((actuales ?? []) as { hashtag: string }[]).map((r) => r.hashtag),
+  );
+  const nuevos = hashtags.filter((h) => !previos.has(h));
+  const sobran = [...previos].filter((h) => !hashtags.includes(h));
+
+  if (sobran.length > 0) {
+    const { error: eBorrar } = await supabase
+      .from("cliente_hashtags")
+      .delete()
+      .eq("cliente_id", id)
+      .in("hashtag", sobran);
+    if (eBorrar) return { ok: false, mensaje: eBorrar.message };
+  }
+
+  if (nuevos.length > 0) {
+    const { error: eInsertar } = await supabase
+      .from("cliente_hashtags")
+      .insert(nuevos.map((hashtag) => ({ cliente_id: id, hashtag })));
+    if (eInsertar) return { ok: false, mensaje: eInsertar.message };
+  }
+
+  revalidarVistasDeClientes();
+
+  const cambios: string[] = [];
+  if (nuevos.length > 0) cambios.push(`${nuevos.length} agregados`);
+  if (sobran.length > 0) cambios.push(`${sobran.length} quitados`);
+
+  return {
+    ok: true,
+    mensaje:
+      cambios.length > 0
+        ? `Cambios guardados · hashtags: ${cambios.join(", ")}.`
+        : "Cambios guardados.",
+    hashtags,
+  };
+}
+
+/**
+ * Un cliente que se deja de atender se desactiva, no se borra: sus informes
+ * históricos tienen que seguir siendo reproducibles.
+ */
+export async function alternarClienteActivo(fd: FormData): Promise<void> {
+  await exigirSesion();
+  const id = String(fd.get("id") ?? "");
+  const activar = fd.get("activar") === "true";
+  if (!id) return;
+
+  const supabase = await supabaseServidor();
+  await supabase.from("clientes").update({ activo: activar }).eq("id", id);
+
+  revalidarVistasDeClientes();
 }
 
 /* ------------------------------------------------------------------ */
