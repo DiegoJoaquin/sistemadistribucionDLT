@@ -72,8 +72,10 @@ export function FormularioCuenta({
             placeholder="@diegoat"
             className="campo"
           />
+          {/* Ya no es un simple "opcional": es por este @ que la importación
+              sabe a qué cuenta pertenece cada exportación. */}
           <p className="text-[11px] leading-tight text-[var(--color-tinta-tenue)]">
-            Opcional
+            Con esto la importación la reconoce
           </p>
         </div>
 
@@ -107,6 +109,9 @@ export function FormularioCuenta({
             defaultValue={cuenta?.orden ?? 100}
             className="campo cifra w-20"
           />
+          <p className="text-[11px] leading-tight text-[var(--color-tinta-tenue)]">
+            Menor va antes. Deja 100
+          </p>
         </div>
       </div>
 
