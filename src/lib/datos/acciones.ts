@@ -11,11 +11,21 @@ import {
   parsearListaHashtags,
   primerError,
 } from "./esquemas";
-import { catastroDelPeriodo, listarCuentas } from "./consultas";
+import {
+  catastroDelPeriodo,
+  clientePorId,
+  informeDeCliente,
+  listarCuentas,
+} from "./consultas";
 import { destinatariosReporte } from "@/lib/correo/entorno";
 import { enviarCorreo } from "@/lib/correo/enviar";
-import { semanaDe } from "@/lib/dominio/formato";
+import { fechaCorta, semanaDe } from "@/lib/dominio/formato";
 import type { Red } from "@/lib/dominio/redes";
+import {
+  construirReporteCliente,
+  htmlCliente,
+  textoCliente,
+} from "@/lib/reporte/cliente";
 import {
   construirReporteSemanal,
   htmlSemanal,
@@ -1100,6 +1110,76 @@ export async function alternarCuentaActiva(fd: FormData): Promise<void> {
   await supabase.from("cuentas").update({ activa: activar }).eq("id", id);
 
   revalidarVistasDeCuentas();
+}
+
+/* ------------------------------------------------------------------ */
+/* Envío del informe de un cliente por correo                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Manda el informe de un cliente por correo.
+ *
+ * Va a los MISMOS destinatarios que el reporte semanal, los que están en
+ * `REPORTE_DESTINATARIOS`. No al cliente: mandarle un correo a un tercero
+ * desde la dirección de DLT es otra decisión, y se toma aparte.
+ *
+ * Igual que el semanal, el informe se vuelve a generar acá a partir del cliente
+ * y el período. No se acepta el HTML del formulario: si se aceptara, cualquiera
+ * con sesión podría mandar el contenido que quisiera desde el correo de la
+ * empresa.
+ */
+export async function enviarInformeCliente(
+  _previo: ResultadoEnvioReporte | null,
+  fd: FormData,
+): Promise<ResultadoEnvioReporte> {
+  await exigirSesion();
+
+  const clienteId = String(fd.get("cliente") ?? "").trim();
+  const desde = String(fd.get("desde") ?? "").trim();
+  const hasta = String(fd.get("hasta") ?? "").trim();
+
+  if (!clienteId) return { ok: false, mensaje: "Falta el cliente." };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(desde) || !/^\d{4}-\d{2}-\d{2}$/.test(hasta)) {
+    return { ok: false, mensaje: "No reconocí el período del informe." };
+  }
+
+  let para: string[];
+  try {
+    para = destinatariosReporte();
+  } catch (e) {
+    return { ok: false, mensaje: e instanceof Error ? e.message : "Sin destinatarios." };
+  }
+
+  const cliente = await clientePorId(clienteId);
+  if (!cliente) return { ok: false, mensaje: "Ese cliente ya no existe." };
+
+  const { informe, base } = await informeDeCliente(cliente, desde, hasta);
+
+  /*
+   * Un informe vacío es peor que no mandar nada: el que lo recibe lee que el
+   * cliente no publicó y hay que explicarle que faltaba cargar los datos.
+   */
+  if (!informe.hayDatos) {
+    return {
+      ok: false,
+      mensaje: `No hay publicaciones de ${cliente.nombre} en ese período, así que el correo saldría vacío.`,
+    };
+  }
+
+  const reporte = construirReporteCliente(informe, base?.mes ?? null);
+  const periodo = `${fechaCorta(desde)} al ${fechaCorta(hasta)}`;
+
+  const envio = await enviarCorreo({
+    para,
+    asunto: `Informe de distribución · ${cliente.nombre} · ${periodo}`,
+    html: htmlCliente(reporte, { urlBase: urlPublica() }),
+    texto: textoCliente(reporte),
+  });
+
+  if (!envio.ok) return { ok: false, mensaje: envio.mensaje };
+
+  revalidatePath("/informe");
+  return { ok: true, mensaje: envio.mensaje, destinatarios: para };
 }
 
 /* ------------------------------------------------------------------ */

@@ -26,7 +26,16 @@ import {
   type SerieCruzada,
 } from "@/lib/dominio/catastro";
 import {
-  coloresDeltaHex,
+  envoltura,
+  esc,
+  H2,
+  lineaKPI,
+  lineaSuelta,
+  type OpcionesCorreo,
+  pill,
+  TH,
+} from "./correo-base";
+import {
   mesLargo,
   numero,
   numeroFino,
@@ -106,100 +115,6 @@ function titular(linea: LineaCatastro): {
 /* Render a correo                                                     */
 /* ------------------------------------------------------------------ */
 
-/*
- * Los estilos repetidos van en una hoja en el <head>, no en cada celda.
- *
- * No es cosmética: con 121 publicaciones y 49 series el correo pesaba 111 KB,
- * de los cuales 83 KB eran atributos `style=` idénticos copiados en cada una de
- * las 378 celdas. Gmail RECORTA los correos sobre ~102 KB — al destinatario le
- * llegaba "[Mensaje recortado]" y la mitad del catastro escondida tras un clic.
- *
- * Lo dinámico (el color de cada variación, que depende de su valor) sigue en
- * línea, porque no se puede saber de antemano.
- *
- * Si un cliente de correo ignora la hoja de estilos — le pasa a algún Outlook
- * viejo — el correo se sigue leyendo: las alineaciones van como atributos
- * `align` de HTML y el espaciado como `cellpadding`, que sobreviven a que se
- * descarte el CSS. Se pierde el detalle visual, no el contenido.
- */
-const HOJA = `
-    body{margin:0;padding:0;background:#f6f5f3}
-    .m{width:100%;max-width:720px;text-align:left;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif}
-    .t{width:100%;border-collapse:collapse}
-    .card{margin:0 0 16px;padding:12px 14px;border:1px solid #e5e4e0;border-radius:8px;background:#fff}
-    .h2{margin:28px 0 10px;font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6e6e68}
-    .th{padding:8px 6px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6e6e68;font-weight:400}
-    .c{padding:7px 6px;border-top:1px solid #e5e4e0;font-size:13px;color:#33332f}
-    .k{padding:3px 0;font-size:14px;color:#33332f}
-    .km{padding:3px 0;font-size:13px;color:#8a8a82}
-    .lbl{color:#6e6e68}
-    .val{color:#1a1a18}
-    .g{color:#8a8a82}
-    .sm{font-size:11px;color:#8a8a82}
-    .cmp{font-size:13px}
-    .p{display:inline-block;padding:2px 6px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap}
-    .tit{margin:0 0 8px;font-size:14px;font-weight:700;color:#1a1a18}
-    .nota{margin:0;font-size:14px;color:#8a8a82}
-`;
-
-const esc = (s: string) =>
-  s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-
-/** Los dos colores del badge son lo único que no se puede sacar a una clase. */
-function pill(d: number | null): string {
-  const c = coloresDeltaHex(d);
-  return `<span class="p" style="background:${c.fondo};color:${c.texto}">${porcentajeDelta(
-    d,
-  )}</span>`;
-}
-
-const H2 = (t: string) => `<h2 class="h2">${esc(t)}</h2>`;
-
-const TH = (t: string, alinear = "left") =>
-  `<th class="th" align="${alinear}">${esc(t)}</th>`;
-
-/**
- * Una línea de KPI, en el mismo formato que ya usa el equipo:
- *
- *     Alcance: 63.874 (-9,0% que la línea base)
- *
- * §9.4 — distingue dos cosas que se veían iguales y no lo son: que la métrica
- * no se haya medido esa semana, y que no haya línea base contra la que
- * compararla. Antes las dos salían como "— (sin línea base)", que le echaba la
- * culpa a la base cuando lo que faltaba era el dato.
- */
-function lineaKPI(
-  nombre: string,
-  valorCrudo: number | null,
-  valor: string,
-  vsBase: number | null,
-  textoBase: string,
-  vsCuenta?: number | null,
-): string {
-  let comparacion: string;
-  if (valorCrudo === null) {
-    comparacion = `<span class="g">no se midió esta semana</span>`;
-  } else {
-    const trozo = (d: number | null, que: string) => {
-      if (d === null) return `<span class="g">sin ${que}</span>`;
-      return `<span style="color:${coloresDeltaHex(d).texto}">${porcentajeDelta(
-        d,
-      )} ${que}</span>`;
-    };
-    const partes = [trozo(vsBase, textoBase)];
-    if (vsCuenta !== undefined) partes.push(trozo(vsCuenta, "que la cuenta"));
-    comparacion = partes.join(" · ");
-  }
-
-  return `<tr><td class="k"><span class="lbl">${esc(
-    nombre,
-  )}:</span> <strong class="${valorCrudo === null ? "g" : "val"}">${valor}</strong> <span class="cmp">(${comparacion})</span></td></tr>`;
-}
-
 /**
  * Línea de métrica de perfil, con el mismo formato que las de KPI.
  *
@@ -208,11 +123,7 @@ function lineaKPI(
  * porque "— (sin línea base)" no dice nada.
  */
 function lineaPerfil(nombre: string, valor: number | null, texto: string): string {
-  if (valor === null) {
-    return `<tr><td class="k"><span class="lbl">${esc(
-      nombre,
-    )}:</span> <strong class="g">${texto}</strong></td></tr>`;
-  }
+  if (valor === null) return lineaSuelta(nombre, texto, true);
   return lineaKPI(nombre, valor, texto, null, "línea base");
 }
 
@@ -228,6 +139,7 @@ function bloqueTotal(linea: LineaCatastro, perfil: LineaPerfil | null): string {
           numero(linea.periodo.alcance),
           linea.vsSuBase.alcance,
           "que la línea base",
+          { sinMedir: "no se midió esta semana" },
         )
       : `<tr><td class="km">Alcance: no lo entrega YouTube</td></tr>`,
     lineaKPI(
@@ -236,6 +148,7 @@ function bloqueTotal(linea: LineaCatastro, perfil: LineaPerfil | null): string {
       numero(linea.periodo.visualizaciones),
       linea.vsSuBase.visualizaciones,
       "que la línea base",
+      { sinMedir: "no se midió esta semana" },
     ),
     lineaKPI(
       "Interacciones",
@@ -243,6 +156,7 @@ function bloqueTotal(linea: LineaCatastro, perfil: LineaPerfil | null): string {
       numero(linea.periodo.interacciones),
       linea.vsSuBase.interacciones,
       "que la línea base",
+      { sinMedir: "no se midió esta semana" },
     ),
     lineaKPI(
       "Engagement",
@@ -250,6 +164,7 @@ function bloqueTotal(linea: LineaCatastro, perfil: LineaPerfil | null): string {
       porcentaje(linea.periodo.engagement),
       linea.vsSuBase.engagement,
       "que la línea base",
+      { sinMedir: "no se midió esta semana" },
     ),
     lineaKPI(
       "Seguidores nuevos",
@@ -257,6 +172,7 @@ function bloqueTotal(linea: LineaCatastro, perfil: LineaPerfil | null): string {
       numeroFino(linea.periodo.nuevos_seguidores),
       linea.vsSuBase.nuevos_seguidores,
       "que la línea base",
+      { sinMedir: "no se midió esta semana" },
     ),
     // §4.3 — las de perfil van en el mismo bloque, a continuación.
     ...(perfil
@@ -430,13 +346,7 @@ function listaDestacadas(
   </table>`;
 }
 
-export interface OpcionesCorreoSemanal {
-  /**
-   * URL pública de la aplicación. Sin ella el correo va sin logo: un cliente
-   * de correo no resuelve rutas relativas.
-   */
-  urlBase?: string | null;
-}
+export type OpcionesCorreoSemanal = OpcionesCorreo;
 
 /**
  * Límite de Gmail: sobre ~102 KB recorta el correo y muestra "[Mensaje
@@ -456,34 +366,15 @@ export function htmlSemanal(
       )} y contra el promedio total de su cuenta.`
     : "No hay línea base activa: las variaciones aparecen como guion.";
 
-  const aviso = r.baseSeSolapa
-    ? `<p style="margin:10px 0 0;padding:10px 12px;border:1px solid #f0d9a8;border-radius:8px;background:#fdf6e7;font-size:13px;color:#6b4e12">
-        La línea base es del mismo mes que esta semana, así que estas publicaciones están incluidas en la referencia y las variaciones se comparan en parte contra sí mismas. Una serie que solo salió esta semana marca 0,0%.
-      </p>`
-    : "";
-
-  return `<!doctype html>
-<html lang="es-CL">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reporte semanal ${esc(
-    r.periodo,
-  )}</title><style>${HOJA}</style></head>
-<body>
-<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;background:#f6f5f3">
-<tr><td align="center" style="padding:24px 12px">
-<table role="presentation" cellpadding="0" cellspacing="0" class="m">
-<tr><td>
-
-  ${
-    opciones.urlBase
-      ? `<img src="${opciones.urlBase}/logo-dlt.png" width="46" height="47" alt="DLT Sports" style="display:block;border:0;margin:0 0 14px">`
-      : ""
-  }
-  <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#8a8a82">DLT Sports · Distribución</p>
-  <h1 style="margin:6px 0 2px;font-size:22px;font-weight:700;color:#1a1a18">Catastro semanal de distribución</h1>
-  <p style="margin:0 0 4px;font-size:15px;color:#33332f">${esc(r.periodo)}</p>
-  <p style="margin:0;font-size:12px;color:#8a8a82">${referencia}</p>
-  ${aviso}
-
+  return envoltura({
+    titulo: `Reporte semanal ${r.periodo}`,
+    encabezado: "Catastro semanal de distribución",
+    bajada: r.periodo,
+    referencia,
+    aviso: r.baseSeSolapa
+      ? "La línea base es del mismo mes que esta semana, así que estas publicaciones están incluidas en la referencia y las variaciones se comparan en parte contra sí mismas. Una serie que solo salió esta semana marca 0,0%."
+      : undefined,
+    cuerpo: `
   ${
     r.hayDatos
       ? `<p class="card" style="margin:16px 0 0;padding:10px 12px;font-size:14px;color:#33332f">
@@ -518,18 +409,11 @@ export function htmlSemanal(
       ? r.bloques.map((b) => bloqueCuenta(r, b)).join("")
       : `<p class="nota">No hay cuentas con publicaciones en esta semana.</p>`
   }
-
-  <p style="margin:28px 0 0;padding-top:12px;border-top:1px solid #e5e4e0;font-size:11px;line-height:1.6;color:#8a8a82">
-    Todos los valores son promedios por publicación, no sumas: una serie con 10 publicaciones no se ve mejor que una con 2 por haber salido más veces.<br>
-    El TOTAL de cada cuenta se calcula sobre todas sus publicaciones, no sumando las series.
-  </p>
-
-</td></tr>
-</table>
-</td></tr>
-</table>
-</body>
-</html>`;
+`,
+    pie: `Todos los valores son promedios por publicación, no sumas: una serie con 10 publicaciones no se ve mejor que una con 2 por haber salido más veces.<br>
+    El TOTAL de cada cuenta se calcula sobre todas sus publicaciones, no sumando las series.`,
+    opciones,
+  });
 }
 
 /** Versión en texto plano, para pegar en WhatsApp o en un correo simple. */

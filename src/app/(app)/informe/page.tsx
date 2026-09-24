@@ -4,9 +4,19 @@ import {
   EvolucionMensual,
   TablaSeriesCliente,
 } from "@/componentes/BloqueInforme";
+import { EnviarInforme } from "@/componentes/EnviarInforme";
+import { VistaPreviaReporte } from "@/componentes/VistaPreviaReporte";
 import { Cifra, Insignia, Nota, Pct, Vacio } from "@/componentes/ui";
+import { parsearDestinatarios } from "@/lib/correo/direcciones";
+import { faltantesCorreo } from "@/lib/correo/entorno";
 import { informeDeCliente, listarClientes } from "@/lib/datos/consultas";
 import { fechaCorta, hoyISO, mesLargo } from "@/lib/dominio/formato";
+import {
+  construirReporteCliente,
+  htmlCliente,
+  textoCliente,
+} from "@/lib/reporte/cliente";
+import { urlPublica } from "@/lib/supabase/entorno";
 
 export const metadata = { title: "Informes por cliente · KPIs DLT" };
 
@@ -47,6 +57,15 @@ export default async function PaginaInforme(props: PageProps<"/informe">) {
   const resultado = cliente
     ? await informeDeCliente(cliente, desde, hasta)
     : null;
+
+  const reporte = resultado
+    ? construirReporteCliente(resultado.informe, resultado.base?.mes ?? null)
+    : null;
+
+  const faltantes = faltantesCorreo();
+  const destinatarios = parsearDestinatarios(
+    process.env.REPORTE_DESTINATARIOS,
+  ).validos;
 
   return (
     <div className="space-y-5">
@@ -269,6 +288,28 @@ export default async function PaginaInforme(props: PageProps<"/informe">) {
                       cliente={cliente.nombre}
                     />
                   ))}
+
+                  {reporte && cliente && (
+                    <section className="space-y-3">
+                      <VistaPreviaReporte
+                        html={htmlCliente(reporte, { urlBase: urlPublica() })}
+                        texto={textoCliente(reporte)}
+                        nombreArchivo={`informe-${cliente.nombre
+                          .toLowerCase()
+                          .replace(/[^a-z0-9]+/g, "-")
+                          .replace(/^-|-$/g, "")}-${desde}-a-${hasta}`}
+                        titulo={`Informe de ${cliente.nombre} para enviar`}
+                      />
+                      <EnviarInforme
+                        cliente={cliente.id}
+                        nombreCliente={cliente.nombre}
+                        desde={desde}
+                        hasta={hasta}
+                        destinatarios={destinatarios}
+                        faltantes={faltantes}
+                      />
+                    </section>
+                  )}
 
                   <p className="text-[11px] leading-relaxed text-[var(--color-tinta-tenue)]">
                     Todos los valores son promedios por publicación, no sumas.
