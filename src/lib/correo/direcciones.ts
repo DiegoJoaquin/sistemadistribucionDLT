@@ -14,20 +14,43 @@ export interface FaltanteCorreo {
   para: string;
 }
 
-/** Lo mínimo para poder mandar un correo. Todo lo demás tiene valor por defecto. */
-export const VARIABLES_CORREO: readonly FaltanteCorreo[] = [
+/**
+ * Lo mínimo para poder conectarse al servidor de correo.
+ *
+ * Va aparte de los destinatarios porque hay envíos donde el destinatario se
+ * escribe a mano: el informe de un cliente se le manda a quien corresponda,
+ * que no siempre es el mismo. Ahí `REPORTE_DESTINATARIOS` sirve de valor por
+ * defecto, no de requisito.
+ */
+export const VARIABLES_SMTP: readonly FaltanteCorreo[] = [
   { variable: "SMTP_HOST", para: "el servidor de salida de tu correo" },
   { variable: "SMTP_USUARIO", para: "tu dirección de correo" },
   { variable: "SMTP_CLAVE", para: "la contraseña de aplicación" },
+];
+
+/** Lo mínimo para el envío automático del reporte semanal, que va a fijos. */
+export const VARIABLES_CORREO: readonly FaltanteCorreo[] = [
+  ...VARIABLES_SMTP,
   { variable: "REPORTE_DESTINATARIOS", para: "a quiénes se manda el reporte" },
 ];
 
 /** Qué falta. Vacío significa que el envío está configurado. */
 export function faltantesEn(
   env: Record<string, string | undefined>,
+  variables: readonly FaltanteCorreo[] = VARIABLES_CORREO,
 ): FaltanteCorreo[] {
-  return VARIABLES_CORREO.filter(({ variable }) => !env[variable]?.trim());
+  return variables.filter(({ variable }) => !env[variable]?.trim());
 }
+
+/**
+ * Tope de destinatarios por envío.
+ *
+ * El informe se manda a alguien del equipo para que lo reenvíe, así que dos o
+ * tres direcciones alcanzan. El límite existe para que un campo de texto
+ * abierto, con la dirección de la empresa detrás, no se pueda usar para mandar
+ * un correo a cincuenta personas de una vez.
+ */
+export const MAXIMO_DESTINATARIOS = 10;
 
 /** Forma mínima de una dirección. No valida que exista, solo que sea una. */
 const FORMA = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

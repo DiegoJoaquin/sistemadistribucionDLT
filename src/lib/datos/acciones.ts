@@ -17,6 +17,10 @@ import {
   informeDeCliente,
   listarCuentas,
 } from "./consultas";
+import {
+  MAXIMO_DESTINATARIOS,
+  parsearDestinatarios,
+} from "@/lib/correo/direcciones";
 import { destinatariosReporte } from "@/lib/correo/entorno";
 import { enviarCorreo } from "@/lib/correo/enviar";
 import { fechaCorta, semanaDe } from "@/lib/dominio/formato";
@@ -1117,16 +1121,20 @@ export async function alternarCuentaActiva(fd: FormData): Promise<void> {
 /* ------------------------------------------------------------------ */
 
 /**
- * Manda el informe de un cliente por correo.
+ * Manda el informe de un cliente por correo, a quien se escriba en el campo.
  *
- * Va a los MISMOS destinatarios que el reporte semanal, los que están en
- * `REPORTE_DESTINATARIOS`. No al cliente: mandarle un correo a un tercero
- * desde la dirección de DLT es otra decisión, y se toma aparte.
+ * El destinatario va abierto y no fijo como en el reporte semanal: el informe
+ * se le manda a alguien del equipo para que lo reenvíe a quien corresponda, y
+ * eso cambia según el cliente y la ocasión. `REPORTE_DESTINATARIOS` queda como
+ * el valor que viene propuesto en el campo.
  *
- * Igual que el semanal, el informe se vuelve a generar acá a partir del cliente
- * y el período. No se acepta el HTML del formulario: si se aceptara, cualquiera
- * con sesión podría mandar el contenido que quisiera desde el correo de la
- * empresa.
+ * Las direcciones se vuelven a validar acá aunque el formulario ya lo haya
+ * hecho: el navegador puede mandar cualquier cosa, y detrás de este botón está
+ * la dirección de correo de la empresa.
+ *
+ * El informe también se vuelve a generar acá a partir del cliente y el período.
+ * No se acepta el HTML del formulario: si se aceptara, cualquiera con sesión
+ * podría mandar el contenido que quisiera desde el correo de DLT.
  */
 export async function enviarInformeCliente(
   _previo: ResultadoEnvioReporte | null,
@@ -1143,11 +1151,37 @@ export async function enviarInformeCliente(
     return { ok: false, mensaje: "No reconocí el período del informe." };
   }
 
+  const escrito = String(fd.get("para") ?? "").trim();
   let para: string[];
-  try {
-    para = destinatariosReporte();
-  } catch (e) {
-    return { ok: false, mensaje: e instanceof Error ? e.message : "Sin destinatarios." };
+
+  if (escrito === "") {
+    // Campo vacío: se cae en los destinatarios configurados, si los hay.
+    try {
+      para = destinatariosReporte();
+    } catch {
+      return {
+        ok: false,
+        mensaje: "Escribe a quién mandárselo: el campo de destinatarios está vacío.",
+      };
+    }
+  } else {
+    const { validos, invalidos } = parsearDestinatarios(escrito);
+    if (invalidos.length > 0) {
+      return {
+        ok: false,
+        mensaje: `Esto no parece una dirección de correo: ${invalidos.join(", ")}.`,
+      };
+    }
+    if (validos.length === 0) {
+      return { ok: false, mensaje: "Escribe al menos una dirección de correo." };
+    }
+    if (validos.length > MAXIMO_DESTINATARIOS) {
+      return {
+        ok: false,
+        mensaje: `Son ${validos.length} destinatarios y el máximo es ${MAXIMO_DESTINATARIOS}. Mándaselo a una persona del equipo y que ella lo reenvíe.`,
+      };
+    }
+    para = validos;
   }
 
   const cliente = await clientePorId(clienteId);

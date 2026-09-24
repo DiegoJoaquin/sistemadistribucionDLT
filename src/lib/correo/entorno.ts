@@ -20,6 +20,7 @@ import {
   faltantesEn,
   parsearDestinatarios,
   parsearPuerto,
+  VARIABLES_SMTP,
 } from "./direcciones";
 
 export type { FaltanteCorreo };
@@ -45,6 +46,16 @@ export interface ConfigSMTP {
  */
 export function faltantesCorreo(): FaltanteCorreo[] {
   return faltantesEn(process.env);
+}
+
+/**
+ * Solo lo necesario para conectarse al servidor, sin exigir destinatarios.
+ *
+ * Lo usa el informe por cliente, donde el destinatario se escribe a mano y
+ * `REPORTE_DESTINATARIOS` es nada más el valor que viene propuesto.
+ */
+export function faltantesSMTP(): FaltanteCorreo[] {
+  return faltantesEn(process.env, VARIABLES_SMTP);
 }
 
 export function correoConfigurado(): boolean {

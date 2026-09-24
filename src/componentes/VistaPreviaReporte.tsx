@@ -84,7 +84,7 @@ export function VistaPreviaReporte({
         <div>
           <h2 className="text-sm font-semibold">{titulo}</h2>
           <p className="mt-0.5 text-xs text-[var(--color-tinta-suave)]">
-            Así se ve en el buzón y así sale el PDF.
+            Así llega al buzón de quien lo reciba.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -102,8 +102,11 @@ export function VistaPreviaReporte({
           >
             Copiar texto
           </button>
-          <button type="button" className="boton" onClick={guardarPDF}>
-            Descargar PDF
+          <button type="button" className="boton-suave" onClick={guardarPDF}>
+            Guardar PDF
+          </button>
+          <button type="button" className="boton-suave" onClick={descargarHTML}>
+            Descargar HTML
           </button>
         </div>
       </div>
@@ -132,20 +135,11 @@ export function VistaPreviaReporte({
         sandbox="allow-same-origin allow-modals"
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-filete)] px-4 py-2">
-        <p className="text-[11px] leading-relaxed text-[var(--color-tinta-tenue)]">
-          El PDF se guarda desde el diálogo de impresión: elige{" "}
-          <strong>Guardar como PDF</strong> en Destino. Sale con los colores y
-          sin cortar los bloques entre páginas.
-        </p>
-        <button
-          type="button"
-          onClick={descargarHTML}
-          className="text-[11px] text-[var(--color-tinta-tenue)] underline-offset-2 hover:text-[var(--color-tinta)] hover:underline"
-        >
-          Descargar el HTML
-        </button>
-      </div>
+      <p className="border-t border-[var(--color-filete)] px-4 py-2 text-[11px] leading-relaxed text-[var(--color-tinta-tenue)]">
+        El PDF sale del diálogo de impresión, eligiendo{" "}
+        <strong>Guardar como PDF</strong> en Destino. Lo habitual es mandarlo
+        por correo con el botón de abajo.
+      </p>
     </section>
   );
 }

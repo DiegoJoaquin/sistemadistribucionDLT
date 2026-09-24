@@ -8,7 +8,7 @@ import { EnviarInforme } from "@/componentes/EnviarInforme";
 import { VistaPreviaReporte } from "@/componentes/VistaPreviaReporte";
 import { Cifra, Insignia, Nota, Pct, Vacio } from "@/componentes/ui";
 import { parsearDestinatarios } from "@/lib/correo/direcciones";
-import { faltantesCorreo } from "@/lib/correo/entorno";
+import { faltantesSMTP } from "@/lib/correo/entorno";
 import { informeDeCliente, listarClientes } from "@/lib/datos/consultas";
 import { fechaCorta, hoyISO, mesLargo } from "@/lib/dominio/formato";
 import {
@@ -62,7 +62,8 @@ export default async function PaginaInforme(props: PageProps<"/informe">) {
     ? construirReporteCliente(resultado.informe, resultado.base?.mes ?? null)
     : null;
 
-  const faltantes = faltantesCorreo();
+  // Solo lo del servidor: el destinatario se escribe en el campo.
+  const faltantes = faltantesSMTP();
   const destinatarios = parsearDestinatarios(
     process.env.REPORTE_DESTINATARIOS,
   ).validos;
@@ -305,7 +306,7 @@ export default async function PaginaInforme(props: PageProps<"/informe">) {
                         nombreCliente={cliente.nombre}
                         desde={desde}
                         hasta={hasta}
-                        destinatarios={destinatarios}
+                        porDefecto={destinatarios}
                         faltantes={faltantes}
                       />
                     </section>

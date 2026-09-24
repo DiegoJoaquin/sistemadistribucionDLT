@@ -12,10 +12,12 @@ import {
   esDireccion,
   esPuertoSeguro,
   faltantesEn,
+  MAXIMO_DESTINATARIOS,
   ocultarDireccion,
   parsearDestinatarios,
   parsearPuerto,
   VARIABLES_CORREO,
+  VARIABLES_SMTP,
 } from "./direcciones";
 import { explicarError } from "./errores";
 import { armarMensaje } from "./mensaje";
@@ -94,6 +96,50 @@ describe("faltantesEn", () => {
     for (const v of VARIABLES_CORREO) {
       expect(v.para.length).toBeGreaterThan(10);
     }
+  });
+
+  /*
+   * El informe por cliente se manda a quien se escriba en el campo, así que
+   * `REPORTE_DESTINATARIOS` ahí es solo el valor propuesto. Exigirlo escondería
+   * el botón de envío del informe por una variable que no le hace falta.
+   */
+  it("para el informe no se exige REPORTE_DESTINATARIOS", () => {
+    const soloSMTP = {
+      SMTP_HOST: "smtp.gmail.com",
+      SMTP_USUARIO: "diego@dltsports.com",
+      SMTP_CLAVE: "secreto",
+    };
+    expect(faltantesEn(soloSMTP, VARIABLES_SMTP)).toEqual([]);
+    // Para el reporte semanal, que va a destinatarios fijos, sí se exige.
+    expect(faltantesEn(soloSMTP).map((f) => f.variable)).toEqual([
+      "REPORTE_DESTINATARIOS",
+    ]);
+  });
+
+  it("VARIABLES_SMTP es un subconjunto de las del reporte", () => {
+    for (const v of VARIABLES_SMTP) {
+      expect(VARIABLES_CORREO).toContain(v);
+    }
+    expect(VARIABLES_CORREO.length).toBe(VARIABLES_SMTP.length + 1);
+  });
+});
+
+describe("tope de destinatarios", () => {
+  /*
+   * El campo de destinatarios del informe es texto abierto y detrás está la
+   * dirección de correo de la empresa. El tope evita que se pueda usar para
+   * mandar un correo a medio mundo de una vez.
+   */
+  it("hay un máximo y es un número razonable para un envío interno", () => {
+    expect(MAXIMO_DESTINATARIOS).toBeGreaterThan(1);
+    expect(MAXIMO_DESTINATARIOS).toBeLessThanOrEqual(20);
+  });
+
+  it("una lista larga se detecta contando los válidos", () => {
+    const muchos = Array.from({ length: 30 }, (_, i) => `p${i}@dlt.cl`).join(", ");
+    expect(parsearDestinatarios(muchos).validos.length).toBeGreaterThan(
+      MAXIMO_DESTINATARIOS,
+    );
   });
 });
 
