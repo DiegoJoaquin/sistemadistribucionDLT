@@ -439,6 +439,65 @@ export interface ResultadoImportRegistro extends Resultado {
   detalle?: DetalleImportRegistro;
 }
 
+/** Cuántas filas van por petición: el límite es el tamaño del cuerpo. */
+const TANDA_ESCRITURA = 200;
+
+type SupabaseServidor = Awaited<ReturnType<typeof supabaseServidor>>;
+
+/**
+ * Escribe en tandas y, si una tanda falla, reintenta fila por fila.
+ *
+ * El reintento no es un lujo. Antes, un solo caracter inválido en un caption
+ * tumbaba la tanda entera: de 398 publicaciones entraban 200 y se perdían 198,
+ * con un mensaje —"se cortó en la fila 201"— que no dejaba claro que las
+ * primeras 200 sí habían quedado. Ahora falla solo la fila que está mal y se
+ * dice cuál.
+ *
+ * La reimportación es idempotente por (cuenta, id_externo), así que volver a
+ * subir el archivo completa lo que falte sin duplicar nada.
+ */
+async function escribirEnTandas(
+  supabase: SupabaseServidor,
+  filas: readonly Record<string, unknown>[],
+  modo: "insertar" | "actualizar",
+): Promise<{ escritas: number; fallidas: { titulo: string; motivo: string }[] }> {
+  const escribir = (lote: readonly Record<string, unknown>[]) =>
+    modo === "insertar"
+      ? supabase.from("registros").insert(lote)
+      : supabase.from("registros").upsert(lote, { onConflict: "id" });
+
+  let escritas = 0;
+  const fallidas: { titulo: string; motivo: string }[] = [];
+
+  for (let i = 0; i < filas.length; i += TANDA_ESCRITURA) {
+    const lote = filas.slice(i, i + TANDA_ESCRITURA);
+    const { error } = await escribir(lote);
+
+    if (!error) {
+      escritas += lote.length;
+      continue;
+    }
+
+    // La tanda falló: se reintenta una por una para aislar la culpable.
+    for (const fila of lote) {
+      const { error: suyo } = await escribir([fila]);
+      if (suyo) {
+        fallidas.push({
+          titulo:
+            typeof fila.titulo_contenido === "string" && fila.titulo_contenido
+              ? fila.titulo_contenido.slice(0, 60)
+              : String(fila.id_externo ?? fila.fecha ?? "sin título"),
+          motivo: suyo.message,
+        });
+      } else {
+        escritas += 1;
+      }
+    }
+  }
+
+  return { escritas, fallidas };
+}
+
 /**
  * §5.1 + catastro semanal — sube la exportación y el registro se llena solo.
  *
@@ -545,23 +604,9 @@ export async function importarPublicaciones(
     }
   }
 
-  // En tandas, para no chocar con el límite de tamaño de la petición.
-  for (let i = 0; i < nuevas.length; i += 200) {
-    const { error } = await supabase.from("registros").insert(nuevas.slice(i, i + 200));
-    if (error) {
-      return {
-        ok: false,
-        mensaje: `Se cortó en la fila ${i + 1} de ${nuevas.length}: ${error.message}`,
-      };
-    }
-  }
-
-  for (let i = 0; i < existentes.length; i += 200) {
-    const { error } = await supabase
-      .from("registros")
-      .upsert(existentes.slice(i, i + 200), { onConflict: "id" });
-    if (error) return { ok: false, mensaje: error.message };
-  }
+  const puestas = await escribirEnTandas(supabase, nuevas, "insertar");
+  const refrescadas = await escribirEnTandas(supabase, existentes, "actualizar");
+  const fallidas = [...puestas.fallidas, ...refrescadas.fallidas];
 
   revalidarVistasDeRegistros();
 
@@ -569,20 +614,33 @@ export async function importarPublicaciones(
   const hashtags = contarHashtags(conversion.filas);
   const series = hashtags.filter((h) => h.hashtag !== null).length;
 
+  /*
+   * El aviso va en el mensaje principal y no entre las advertencias: si algo no
+   * se pudo cargar, la persona tiene que enterarse antes de dar el archivo por
+   * subido. Antes decía "se cortó en la fila 201" y no quedaba claro que las
+   * 200 anteriores sí habían entrado.
+   */
+  const base =
+    refrescadas.escritas === 0
+      ? `Se cargaron ${puestas.escritas} publicaciones de ${cuenta.nombre}.`
+      : `Se cargaron ${puestas.escritas} publicaciones nuevas de ${cuenta.nombre} y se actualizaron ${refrescadas.escritas} que ya estaban.`;
+
   return {
     ok: true,
     mensaje:
-      existentes.length === 0
-        ? `Se cargaron ${nuevas.length} publicaciones de ${cuenta.nombre}.`
-        : `Se cargaron ${nuevas.length} publicaciones nuevas de ${cuenta.nombre} y se actualizaron ${existentes.length} que ya estaban.`,
+      fallidas.length === 0
+        ? base
+        : `${base} ${fallidas.length} ${
+            fallidas.length === 1 ? "no se pudo cargar" : "no se pudieron cargar"
+          }: ${fallidas[0].motivo}. Vuelve a subir el archivo — no duplica nada y completa lo que falte.`,
     fecha: extremos.hasta,
     detalle: {
       cuenta: cuenta.nombre,
       red: cuenta.red,
       usuarioArchivo: leido.cuenta,
       fuente: leido.fuente,
-      insertadas: nuevas.length,
-      actualizadas: existentes.length,
+      insertadas: puestas.escritas,
+      actualizadas: refrescadas.escritas,
       sinFecha: conversion.sinFecha,
       fueraDeRango: conversion.fueraDeRango,
       repetidasEnArchivo: conversion.repetidasEnArchivo,
@@ -591,6 +649,9 @@ export async function importarPublicaciones(
       hashtags,
       advertencias: [
         ...leido.advertencias,
+        ...fallidas.map(
+          (f) => `No se pudo cargar "${f.titulo}": ${f.motivo}`,
+        ),
         ...(series === 0
           ? [
               "Ninguna de estas publicaciones trae hashtag en su texto, así que el catastro semanal las agrupará todas juntas. Puedes ponérselo a mano desde la tabla.",
@@ -728,15 +789,13 @@ export async function importarRegistroHistorico(
       created_by: usuarioId,
     }));
 
-    // En tandas, para no chocar con el límite de tamaño de la petición.
-    for (let i = 0; i < filas.length; i += 200) {
-      const { error } = await supabase.from("registros").insert(filas.slice(i, i + 200));
-      if (error) {
-        return {
-          ok: false,
-          mensaje: `Se cortó en la fila ${i + 1} de ${filas.length}: ${error.message}`,
-        };
-      }
+    const puestas = await escribirEnTandas(supabase, filas, "insertar");
+    if (puestas.fallidas.length > 0) {
+      revalidarVistasDeRegistros();
+      return {
+        ok: false,
+        mensaje: `Se cargaron ${puestas.escritas} de ${filas.length} filas. Las otras ${puestas.fallidas.length} no: ${puestas.fallidas[0].motivo}`,
+      };
     }
   }
 

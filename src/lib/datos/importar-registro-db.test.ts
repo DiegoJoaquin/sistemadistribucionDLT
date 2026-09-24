@@ -272,6 +272,54 @@ describe("importar publicaciones al registro", () => {
     expect(r.rows[0].categoria).toBe("Short");
   });
 
+  /*
+   * El error que rompió la importación de julio, de punta a punta.
+   *
+   * PostgREST escribe haciendo un cast del cuerpo de la petición a `json`, así
+   * que todo lo que va a la base pasa por el parser de JSON de Postgres. Un
+   * caption con un emoji cortado al medio dejaba media pareja UTF-16, que
+   * `JSON.stringify` emite como "\ud83c" suelto, y ese parser la rechaza con
+   * "invalid input syntax for type json" — tumbando la tanda entera de 200
+   * filas. Acá se verifica que el texto que produce el importador ya no puede
+   * hacer eso.
+   */
+  it("un caption con emoji en el borde del recorte es JSON que Postgres acepta", async () => {
+    const diego = await crearCuenta("DiegoAT", "@diegoat", "Instagram");
+
+    for (let relleno = 292; relleno <= 304; relleno++) {
+      const caption = `${"A".repeat(relleno)}🇨🇱 y más texto que sobra del recorte`;
+      const fila = aFilaRegistro(
+        pub({ caption, id_externo: `emoji-${relleno}` }),
+        diego,
+      )!;
+
+      // Tal como viaja: serializado y parseado por Postgres.
+      const cuerpo = JSON.stringify([{ t: fila.titulo_contenido }]);
+      const r = await db.query<{ t: string }>(
+        `select x.t from json_populate_recordset(null::record, $1::json) as x(t text)`,
+        [cuerpo],
+      );
+      expect(r.rows[0].t).toBe(fila.titulo_contenido);
+
+      // Y entra en la tabla de verdad.
+      await insertar(fila);
+    }
+
+    const total = await db.query<{ n: string }>(
+      `select count(*)::text as n from public.registros`,
+    );
+    expect(Number(total.rows[0].n)).toBe(13);
+  });
+
+  it("rechaza lo que Postgres rechazaría, para que la prueba anterior valga", async () => {
+    // Si esto pasara, la prueba de arriba no estaría probando nada.
+    await expect(
+      db.query(
+        `select x.t from json_populate_recordset(null::record, '[{"t":"a \\ud83c"}]'::json) as x(t text)`,
+      ),
+    ).rejects.toThrow(/invalid input syntax for type json/);
+  });
+
   it("carga un lote completo y el hashtag queda normalizado en la base", async () => {
     const diego = await crearCuenta("DiegoAT", "@diegoat", "Instagram");
     const conversion = aFilasRegistro(

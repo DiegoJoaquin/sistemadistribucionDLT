@@ -53,6 +53,63 @@ export const CAMPOS_SOLO_A_MANO = [
 const LARGO_TITULO = 300;
 
 /**
+ * Quita lo que no puede viajar en el cuerpo JSON de la petición.
+ *
+ * Dos cosas, y las dos rompían la importación de verdad:
+ *
+ *  - **Surrogates sin pareja.** Un emoji ocupa dos unidades UTF-16 y cortar el
+ *    texto entre las dos deja media pareja. `JSON.stringify` la emite como
+ *    `\ud83c` suelto, y el parser de JSON de Postgres —que es por donde pasa
+ *    todo lo que escribe PostgREST— la rechaza con "invalid input syntax for
+ *    type json". La tanda entera de 200 filas se cae por un caracter.
+ *  - **Nulos y otros caracteres de control.** Postgres los rechaza con
+ *    "unsupported Unicode escape sequence".
+ *
+ * Es una red de seguridad: `recortarPorGrafemas` ya evita partir emojis. Pero
+ * el texto viene de un archivo ajeno y puede traer cualquier cosa.
+ */
+export function limpiarTexto(texto: string): string {
+  return (
+    texto
+      // Surrogate alto sin su bajo, y bajo sin su alto.
+      .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "")
+      .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "")
+      // Nulo y demás controles C0/C1, que ya no deberían quedar tras colapsar
+      // los espacios, pero un archivo puede traerlos.
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+  );
+}
+
+/*
+ * Se recorta por grafemas y no por caracteres para no partir un emoji.
+ * "🇨🇱" son dos puntos de código y "👨‍👩‍👧" son cinco: cortar en medio deja
+ * un resto sin sentido, o directamente media pareja UTF-16.
+ */
+const segmentador =
+  typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter("es", { granularity: "grapheme" })
+    : null;
+
+export function recortarPorGrafemas(texto: string, largo: number): string {
+  if (texto.length <= largo) return texto;
+
+  const piezas = segmentador
+    ? [...segmentador.segment(texto)].map((g) => g.segment)
+    : // Sin Segmenter, por punto de código: igual nunca parte una pareja.
+      [...texto];
+
+  let acumulado = "";
+  for (const pieza of piezas) {
+    // -1 para dejarle lugar a los puntos suspensivos.
+    if (acumulado.length + pieza.length > largo - 1) break;
+    acumulado += pieza;
+  }
+
+  return `${acumulado.trimEnd()}…`;
+}
+
+/**
  * El caption, en una línea y recortado.
  *
  * Sirve para reconocer la publicación en la tabla y en el reporte, no para
@@ -61,15 +118,17 @@ const LARGO_TITULO = 300;
  */
 export function tituloDeCaption(caption: string | null): string | null {
   if (!caption) return null;
-  const plano = caption.replace(/\s+/gu, " ").trim();
+  // Se limpia ANTES de colapsar los espacios: si no, quitar un caracter
+  // inválido de entre dos espacios deja un espacio doble.
+  const plano = limpiarTexto(caption).replace(/\s+/gu, " ").trim();
   if (plano === "") return null;
-  return plano.length <= LARGO_TITULO
-    ? plano
-    : `${plano.slice(0, LARGO_TITULO - 1).trimEnd()}…`;
+  return recortarPorGrafemas(plano, LARGO_TITULO);
 }
 
 function enlaceValido(enlace: string | null): string | null {
-  return enlace && /^https?:\/\//i.test(enlace) ? enlace : null;
+  if (!enlace) return null;
+  const limpio = limpiarTexto(enlace);
+  return /^https?:\/\//i.test(limpio) ? limpio : null;
 }
 
 /**
@@ -116,7 +175,9 @@ export function aFilaRegistro(
     titulo_contenido: tituloDeCaption(p.caption),
     enlace: enlaceValido(p.enlace),
     publicado_en: p.publicado_en,
-    id_externo: p.id_externo,
+    // También se limpia: es parte de la clave única, y un caracter inválido
+    // acá rompería la escritura igual que en el título.
+    id_externo: p.id_externo === null ? null : limpiarTexto(p.id_externo) || null,
     fuente: p.fuente,
   };
 }

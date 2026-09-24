@@ -5,7 +5,9 @@ import {
   aFilasRegistro,
   contarHashtags,
   fusionarConExistente,
+  limpiarTexto,
   rangoDe,
+  recortarPorGrafemas,
   tituloDeCaption,
 } from "./a-registro";
 import { resolverCuenta, usuarioComparable } from "./cuentas";
@@ -127,6 +129,84 @@ describe("tituloDeCaption", () => {
   it("un caption vacío no es un título vacío, es ausencia de título", () => {
     expect(tituloDeCaption("   ")).toBeNull();
     expect(tituloDeCaption(null)).toBeNull();
+  });
+
+  /** ¿Quedó alguna mitad de pareja UTF-16 suelta? */
+  const surrogatesSueltos = (s: string) =>
+    (s.match(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g) ?? []).length +
+    (s.match(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g) ?? []).length;
+
+  /*
+   * El error que rompió la importación de julio: recortar por unidades UTF-16
+   * partía un emoji al medio y dejaba media pareja. `JSON.stringify` la emite
+   * como "\ud83c" suelto y el parser de JSON de Postgres —por donde pasa todo
+   * lo que escribe PostgREST— la rechaza con "invalid input syntax for type
+   * json", tumbando la tanda entera de 200 filas.
+   */
+  it("no parte un emoji al recortar, en ninguna posición del borde", () => {
+    for (const emoji of ["🇨🇱", "🤫", "⚽", "👨‍👩‍👧", "🏃🏽‍♂️"]) {
+      for (let relleno = 290; relleno <= 305; relleno++) {
+        const caption = "A".repeat(relleno) + emoji + " y más texto que sobra";
+        const t = tituloDeCaption(caption)!;
+        expect(surrogatesSueltos(t)).toBe(0);
+        expect(t.length).toBeLessThanOrEqual(300);
+      }
+    }
+  });
+
+  it("el título recortado es JSON que Postgres puede parsear", () => {
+    /*
+     * La prueba de humo de todo esto: si `JSON.stringify` emite un escape de
+     * surrogate suelto, el cuerpo de la petición deja de ser JSON válido para
+     * Postgres. Buscarlo en el texto serializado es la forma directa de verlo.
+     */
+    for (let relleno = 295; relleno <= 302; relleno++) {
+      const t = tituloDeCaption("A".repeat(relleno) + "🇨🇱 sobra texto")!;
+      const serializado = JSON.stringify({ titulo_contenido: t });
+      expect(serializado).not.toMatch(/\\ud[89ab][0-9a-f]{2}(?!\\ud[c-f])/i);
+    }
+  });
+
+  it("quita los nulos y los caracteres de control", () => {
+    // Postgres los rechaza con "unsupported Unicode escape sequence".
+    const t = tituloDeCaption("hola\u0000mundo\u0001y\u001fchao")!;
+    expect(t).toBe("holamundoychao");
+  });
+
+  it("quita un surrogate suelto que venga en el propio archivo", () => {
+    const t = tituloDeCaption("roto \uD83C aquí")!;
+    expect(surrogatesSueltos(t)).toBe(0);
+    expect(t).toBe("roto aquí");
+  });
+
+  it("un emoji completo se conserva tal cual", () => {
+    expect(tituloDeCaption("🇨🇱 #FECHA21xDLT | la jornada 🤫")).toBe(
+      "🇨🇱 #FECHA21xDLT | la jornada 🤫",
+    );
+  });
+});
+
+describe("limpiarTexto", () => {
+  it("no toca un texto normal", () => {
+    expect(limpiarTexto("Hola, ¿qué tal? 🇨🇱 100%")).toBe("Hola, ¿qué tal? 🇨🇱 100%");
+  });
+
+  it("quita las dos mitades sueltas de una pareja", () => {
+    expect(limpiarTexto("a\uD83Cb")).toBe("ab");
+    expect(limpiarTexto("a\uDDE8b")).toBe("ab");
+  });
+});
+
+describe("recortarPorGrafemas", () => {
+  it("no recorta lo que ya entra", () => {
+    expect(recortarPorGrafemas("corto", 100)).toBe("corto");
+  });
+
+  it("corta entre grafemas y agrega los puntos suspensivos", () => {
+    const r = recortarPorGrafemas("🇨🇱🇨🇱🇨🇱🇨🇱", 6);
+    expect(r.endsWith("…")).toBe(true);
+    // Cada bandera son 4 unidades UTF-16: en 6 solo entra una.
+    expect(r).toBe("🇨🇱…");
   });
 });
 
