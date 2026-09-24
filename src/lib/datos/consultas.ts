@@ -11,6 +11,16 @@ import {
   promedioPorPublicacion,
   type PromediosBase,
 } from "@/lib/dominio/calculo";
+import {
+  type BloqueCatastro,
+  claveHashtag,
+  construirBloque,
+  type DestacadaCatastro,
+  destacadas,
+  type FilaCatastro,
+  type SerieCruzada,
+  seriesCruzadas,
+} from "@/lib/dominio/catastro";
 import { type Categoria } from "@/lib/dominio/categorias";
 import type { Plataforma } from "@/lib/dominio/plataformas";
 import {
@@ -24,6 +34,7 @@ import { supabaseServidor } from "@/lib/supabase/servidor";
 import type {
   CuentaRow,
   LineaBaseDetalleRow,
+  LineaBaseHashtagRow,
   LineaBaseRow,
   PublicacionBaseRow,
   RegistroConAutor,
@@ -122,6 +133,38 @@ export async function promediosDeLineaBase(lineaBaseId: string): Promise<MapaBas
   const mapa: MapaBase = new Map();
   for (const fila of (data ?? []) as LineaBaseDetalleRow[]) {
     mapa.set(claveBase(fila.cuenta_id, fila.categoria), {
+      n_publicaciones: fila.n_publicaciones,
+      alcance_prom: fila.alcance_prom,
+      visualizaciones_prom: fila.visualizaciones_prom,
+      interacciones_prom: fila.interacciones_prom,
+      nuevos_seguidores_prom: fila.nuevos_seguidores_prom,
+      engagement_prom: fila.engagement_prom,
+    });
+  }
+  return mapa;
+}
+
+/**
+ * Promedios de la línea base cortados por serie, para el catastro semanal.
+ *
+ * Va aparte de `promediosDeLineaBase` porque es otro grano: esa agrupa por
+ * formato y esta por hashtag. Mezclarlas en un mapa obligaría a distinguir a
+ * ojo si una clave es "Reel" o una serie.
+ */
+export async function promediosPorHashtag(lineaBaseId: string): Promise<MapaBase> {
+  const supabase = await supabaseServidor();
+  const { data, error } = await supabase
+    .from("lineas_base_hashtag")
+    .select("*")
+    .eq("linea_base_id", lineaBaseId);
+
+  if (error) {
+    throw new Error(`No pude leer la línea base por hashtag: ${error.message}`);
+  }
+
+  const mapa: MapaBase = new Map();
+  for (const fila of (data ?? []) as LineaBaseHashtagRow[]) {
+    mapa.set(claveHashtag(fila.cuenta_id, fila.hashtag), {
       n_publicaciones: fila.n_publicaciones,
       alcance_prom: fila.alcance_prom,
       visualizaciones_prom: fila.visualizaciones_prom,
@@ -251,6 +294,90 @@ export async function panelDelDia(fecha: string): Promise<PanelDiario> {
     bloques,
     perfil,
     hayAlgo: registros.length > 0,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Catastro por hashtag (§ reporte semanal)                            */
+/* ------------------------------------------------------------------ */
+
+export interface Catastro {
+  desde: string;
+  hasta: string;
+  base: LineaBaseRow | null;
+  bloques: BloqueCatastro[];
+  /** El mismo hashtag publicado en más de una cuenta. */
+  cruzadas: SerieCruzada[];
+  mejores: DestacadaCatastro[];
+  peores: DestacadaCatastro[];
+  publicaciones: number;
+  /** Cuántas series distintas salieron en el período. */
+  series: number;
+  hayAlgo: boolean;
+}
+
+export function aFilaCatastro(r: RegistroConAutor, cuenta: Cuenta): FilaCatastro {
+  return { ...aFilaCalculo(r, cuenta), hashtag: r.hashtag };
+}
+
+/**
+ * El catastro de un período: qué se publicó, por cuenta y por serie.
+ *
+ * Solo aparecen las cuentas que publicaron algo. Con las cuentas de los
+ * influencers, mostrar las vacías llenaría la vista de bloques en blanco (§8).
+ */
+export async function catastroDelPeriodo(
+  desde: string,
+  hasta: string,
+): Promise<Catastro> {
+  const [registros, base, cuentas] = await Promise.all([
+    listarRegistros({ desde, hasta }),
+    lineaBaseActiva(),
+    listarCuentas(),
+  ]);
+
+  const [porHashtag, porCategoria] = base
+    ? await Promise.all([promediosPorHashtag(base.id), promediosDeLineaBase(base.id)])
+    : [new Map() as MapaBase, new Map() as MapaBase];
+
+  /*
+   * El comparador "promedio de la cuenta" es la fila TOTAL de la línea base,
+   * que en el mapa por categoría es la de categoría nula. Se reindexa por id de
+   * cuenta para que el motor no tenga que conocer la forma de esa clave.
+   */
+  const porCuenta: MapaBase = new Map();
+  for (const cuenta of cuentas) {
+    const total = porCategoria.get(claveBase(cuenta.id, null));
+    if (total) porCuenta.set(cuenta.id, total);
+  }
+
+  const indice = cuentasPorId(cuentas);
+  const filas: FilaCatastro[] = registros.flatMap((r) => {
+    const cuenta = indice.get(r.cuenta_id);
+    return cuenta ? [aFilaCatastro(r, cuenta)] : [];
+  });
+
+  const conActividad = cuentas.filter((c) => filas.some((f) => f.cuentaId === c.id));
+  const bloques = conActividad.map((cuenta) =>
+    construirBloque(filas, cuenta, { porHashtag, porCuenta }),
+  );
+
+  const { mejores, peores } = destacadas(bloques);
+  const series = new Set(
+    filas.filter((f) => f.hashtag !== null).map((f) => f.hashtag),
+  ).size;
+
+  return {
+    desde,
+    hasta,
+    base,
+    bloques,
+    cruzadas: seriesCruzadas(bloques),
+    mejores,
+    peores,
+    publicaciones: filas.reduce((n, f) => n + f.publicaciones, 0),
+    series,
+    hayAlgo: filas.length > 0,
   };
 }
 

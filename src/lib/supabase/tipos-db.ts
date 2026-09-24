@@ -120,6 +120,27 @@ export interface LineaBaseDetalleRow {
   engagement_prom: number | null;
 }
 
+/**
+ * Fila de la vista `lineas_base_hashtag`.
+ *
+ * Igual que `LineaBaseDetalleRow` pero cortada por serie en vez de por formato.
+ * Acá `hashtag` nulo son las publicaciones sin hashtag, NO un total: el total
+ * de la cuenta vive en la otra vista.
+ */
+export interface LineaBaseHashtagRow {
+  linea_base_id: string;
+  cuenta_id: string;
+  cuenta: string;
+  red: Red;
+  hashtag: string | null;
+  n_publicaciones: number;
+  alcance_prom: number | null;
+  visualizaciones_prom: number | null;
+  interacciones_prom: number | null;
+  nuevos_seguidores_prom: number | null;
+  engagement_prom: number | null;
+}
+
 export interface ReporteRow {
   id: string;
   fecha: string;

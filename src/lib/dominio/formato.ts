@@ -193,6 +193,59 @@ export function sumarDias(iso: string, dias: number): string {
 }
 
 /* ------------------------------------------------------------------ */
+/* Semanas, que son el período del catastro                            */
+/* ------------------------------------------------------------------ */
+
+export interface Semana {
+  /** Lunes. */
+  desde: string;
+  /** Domingo. */
+  hasta: string;
+}
+
+/**
+ * La semana de lunes a domingo que contiene esa fecha.
+ *
+ * Lunes a domingo y no domingo a sábado: es cómo se cuenta la semana en Chile y
+ * cómo se arma la planificación del equipo. Con el otro criterio, el reporte
+ * del lunes hablaría de una semana que recién empezó.
+ */
+export function semanaDe(iso: string): Semana {
+  const [a, m, d] = iso.split("-").map(Number);
+  // getUTCDay(): 0 es domingo. Se corre a lunes = 0.
+  const diaSemana = (new Date(Date.UTC(a, m - 1, d)).getUTCDay() + 6) % 7;
+  const desde = sumarDias(iso, -diaSemana);
+  return { desde, hasta: sumarDias(desde, 6) };
+}
+
+export function semanaAnterior(semana: Semana): Semana {
+  return semanaDe(sumarDias(semana.desde, -7));
+}
+
+export function semanaSiguiente(semana: Semana): Semana {
+  return semanaDe(sumarDias(semana.desde, 7));
+}
+
+/** "22 al 28 de septiembre de 2026", o con los dos meses si los cruza. */
+export function rotularSemana({ desde, hasta }: Semana): string {
+  const dia = (iso: string) => Number(iso.slice(8, 10));
+  const mesYAnio = (iso: string) => {
+    const [a, m] = iso.split("-").map(Number);
+    return mismoTexto(
+      new Intl.DateTimeFormat(LOCALE, {
+        ...EN_UTC,
+        month: "long",
+        year: "numeric",
+      }).format(new Date(Date.UTC(a, m - 1, 1))),
+    );
+  };
+
+  return desde.slice(0, 7) === hasta.slice(0, 7)
+    ? `${dia(desde)} al ${dia(hasta)} de ${mesYAnio(desde)}`
+    : `${dia(desde)} de ${mesYAnio(desde)} al ${dia(hasta)} de ${mesYAnio(hasta)}`;
+}
+
+/* ------------------------------------------------------------------ */
 /* Escala de color de los deltas                                       */
 /* ------------------------------------------------------------------ */
 
