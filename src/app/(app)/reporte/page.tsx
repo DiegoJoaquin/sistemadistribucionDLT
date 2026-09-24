@@ -1,29 +1,17 @@
-import { EditorReporte } from "@/componentes/EditorReporte";
-import { SelectorFecha } from "@/componentes/SelectorFecha";
+import Link from "next/link";
+import { NavegacionSemana } from "@/componentes/NavegacionSemana";
 import { VistaPreviaReporte } from "@/componentes/VistaPreviaReporte";
-import { Nota } from "@/componentes/ui";
+import { Nota, Vacio } from "@/componentes/ui";
+import { catastroDelPeriodo } from "@/lib/datos/consultas";
+import { hoyISO, rotularSemana, semanaDe } from "@/lib/dominio/formato";
 import {
-  claveBase,
-  cuentasPorId,
-  listarCuentas,
-  panelDelDia,
-  promediosDeLineaBase,
-  registrosDelDia,
-  reporteDe,
-  aFilaCalculo,
-  type MapaBase,
-} from "@/lib/datos/consultas";
-import { delta, promedioPorPublicacion } from "@/lib/dominio/calculo";
-import { hoyISO } from "@/lib/dominio/formato";
-import {
-  construirReporte,
-  type FilaConDeltas,
-  htmlCorreo,
-  textoPlano,
-} from "@/lib/reporte/generar";
+  construirReporteSemanal,
+  htmlSemanal,
+  textoSemanal,
+} from "@/lib/reporte/semanal";
 import { urlPublica } from "@/lib/supabase/entorno";
 
-export const metadata = { title: "Reporte diario · KPIs DLT" };
+export const metadata = { title: "Reporte semanal · KPIs DLT" };
 
 function primero(v: string | string[] | undefined): string | undefined {
   const s = Array.isArray(v) ? v[0] : v;
@@ -32,76 +20,66 @@ function primero(v: string | string[] | undefined): string | undefined {
 
 export default async function PaginaReporte(props: PageProps<"/reporte">) {
   const sp = await props.searchParams;
-  const fecha = primero(sp.fecha) ?? hoyISO();
+  const semana = semanaDe(primero(sp.semana) ?? hoyISO());
 
-  const [panel, registros, textos, cuentas] = await Promise.all([
-    panelDelDia(fecha),
-    registrosDelDia(fecha),
-    reporteDe(fecha),
-    listarCuentas(),
-  ]);
-
-  const indice = cuentasPorId(cuentas);
-
-  const mapa: MapaBase = panel.base
-    ? await promediosDeLineaBase(panel.base.id)
-    : new Map();
-
-  const filas: FilaConDeltas[] = registros.flatMap((r) => {
-    const cuenta = indice.get(r.cuenta_id);
-    if (!cuenta) return [];
-    const uno = [aFilaCalculo(r, cuenta)];
-    const b = mapa.get(claveBase(cuenta.id, r.categoria)) ?? null;
-    return [{
-      registro: r,
-      cuenta: cuenta.nombre,
-      deltas: {
-        alcance: delta(promedioPorPublicacion(uno, "alcance"), b?.alcance_prom),
-        visualizaciones: delta(
-          promedioPorPublicacion(uno, "visualizaciones"),
-          b?.visualizaciones_prom,
-        ),
-        interacciones: delta(
-          promedioPorPublicacion(uno, "interacciones"),
-          b?.interacciones_prom,
-        ),
-        nuevos_seguidores: delta(
-          promedioPorPublicacion(uno, "nuevos_seguidores"),
-          b?.nuevos_seguidores_prom,
-        ),
-      },
-    }];
-  });
-
-  const reporte = construirReporte(panel, filas, textos);
-  const html = htmlCorreo(reporte, { urlBase: urlPublica() });
-  const texto = textoPlano(reporte);
+  const catastro = await catastroDelPeriodo(semana.desde, semana.hasta);
+  const reporte = construirReporteSemanal(catastro);
+  const html = htmlSemanal(reporte, { urlBase: urlPublica() });
+  const texto = textoSemanal(reporte);
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight">Reporte diario</h1>
+          <h1 className="text-lg font-semibold tracking-tight">Reporte semanal</h1>
           <p className="mt-0.5 text-sm text-[var(--color-tinta-suave)]">
-            {reporte.sobre.length} sobre +80% · {reporte.bajo.length} bajo -80% ·{" "}
-            {reporte.bloques.length}{" "}
-            {reporte.bloques.length === 1 ? "plataforma" : "plataformas"} con
-            actividad.
+            {reporte.hayDatos ? (
+              <>
+                {reporte.publicaciones} publicaciones · {reporte.series} series ·{" "}
+                {reporte.cuentas}{" "}
+                {reporte.cuentas === 1 ? "cuenta" : "cuentas"} con actividad, del{" "}
+                {reporte.periodo}.
+              </>
+            ) : (
+              <>Semana del {reporte.periodo}.</>
+            )}
           </p>
         </div>
-        <SelectorFecha fecha={fecha} ruta="/reporte" />
+        <NavegacionSemana semana={semana} ruta="/reporte" />
       </div>
 
       <Nota>
-        El envío automático por correo todavía no está conectado. Por ahora el
-        reporte se previsualiza, se edita y se copia o se descarga como HTML para
-        pegarlo en el correo.
+        El reporte se genera solo con los datos cargados: ya no tiene las
+        preguntas de texto libre. Revísalo acá y cópialo o descárgalo para
+        pegarlo en el correo — el envío automático todavía no está conectado. El{" "}
+        <Link href="/catastro" className="underline underline-offset-2">
+          catastro
+        </Link>{" "}
+        muestra lo mismo con más detalle, y el{" "}
+        <Link href="/reporte/diario" className="underline underline-offset-2">
+          reporte diario
+        </Link>{" "}
+        sigue disponible para revisar un día puntual.
       </Nota>
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
-        <EditorReporte fecha={fecha} textos={reporte.textos} />
-        <VistaPreviaReporte html={html} texto={texto} fecha={fecha} />
-      </div>
+      {!reporte.hayDatos ? (
+        <Vacio
+          titulo={`No hay publicaciones registradas del ${reporte.periodo}.`}
+          detalle="Sube las exportaciones de la semana desde el registro y las filas se crean solas. Sin datos el correo saldría vacío."
+          accion={
+            <Link href="/registro" className="boton-suave mt-1">
+              Ir al registro
+            </Link>
+          }
+        />
+      ) : (
+        <VistaPreviaReporte
+          html={html}
+          texto={texto}
+          nombreArchivo={`catastro-semanal-${semana.desde}`}
+          titulo="Vista previa del correo semanal"
+        />
+      )}
     </div>
   );
 }

@@ -51,9 +51,24 @@ export interface Resultado {
 function revalidarVistasDeRegistros(): void {
   revalidatePath("/registro");
   revalidatePath("/panel");
+  revalidatePath("/catastro");
   revalidatePath("/historico");
   revalidatePath("/perfil");
   revalidatePath("/reporte");
+  revalidatePath("/reporte/diario");
+}
+
+/**
+ * Todas las vistas que dependen de la LÍNEA BASE.
+ *
+ * Es casi todo, porque la línea base es el divisor de cada variación: cambiarla
+ * cambia hasta el último delta de la aplicación. Estaba repetido en cinco
+ * acciones como `/base` + `/panel`, así que el catastro y el reporte semanal
+ * quedaban mostrando comparaciones contra una base que ya no era la activa.
+ */
+function revalidarVistasDeLineaBase(): void {
+  revalidatePath("/base");
+  revalidarVistasDeRegistros();
 }
 
 /* ------------------------------------------------------------------ */
@@ -331,9 +346,7 @@ export async function importarArchivo(
       );
     }
 
-    revalidatePath("/base");
-    revalidatePath("/panel");
-    revalidatePath("/registro");
+    revalidarVistasDeLineaBase();
 
     return {
       ok: true,
@@ -378,9 +391,7 @@ export async function importarArchivo(
 
   if (error) return { ok: false, mensaje: error.message };
 
-  revalidatePath("/base");
-  revalidatePath("/panel");
-  revalidatePath("/registro");
+  revalidarVistasDeLineaBase();
 
   return {
     ok: true,
@@ -718,10 +729,7 @@ export async function importarRegistroHistorico(
     }
   }
 
-  revalidatePath("/registro");
-  revalidatePath("/panel");
-  revalidatePath("/historico");
-  revalidatePath("/perfil");
+  revalidarVistasDeRegistros();
 
   return {
     ok: true,
@@ -750,9 +758,7 @@ export async function activarLineaBase(fd: FormData): Promise<void> {
   const supabase = await supabaseServidor();
   await supabase.rpc("activar_linea_base", { p_id: id });
 
-  revalidatePath("/base");
-  revalidatePath("/panel");
-  revalidatePath("/registro");
+  revalidarVistasDeLineaBase();
 }
 
 export async function borrarLineaBase(fd: FormData): Promise<void> {
@@ -763,8 +769,7 @@ export async function borrarLineaBase(fd: FormData): Promise<void> {
   const supabase = await supabaseServidor();
   await supabase.from("lineas_base").delete().eq("id", id);
 
-  revalidatePath("/base");
-  revalidatePath("/panel");
+  revalidarVistasDeLineaBase();
 }
 
 /** §5.2 — la clasificación automática debe poder corregirse a mano. */
@@ -780,8 +785,7 @@ export async function reclasificar(fd: FormData): Promise<void> {
     .update({ tipo, clasificado_a_mano: true })
     .eq("id", id);
 
-  revalidatePath("/base");
-  revalidatePath("/panel");
+  revalidarVistasDeLineaBase();
 }
 
 /* ------------------------------------------------------------------ */
@@ -806,7 +810,8 @@ export async function guardarReporte(
 
   if (error) return { ok: false, mensaje: error.message };
 
-  revalidatePath("/reporte");
+  // Los textos libres solo viven en el reporte diario; el semanal no los usa.
+  revalidatePath("/reporte/diario");
   return { ok: true, mensaje: "Texto guardado." };
 }
 
@@ -821,8 +826,7 @@ export async function guardarReporte(
 /** Las cuentas aparecen en todas las vistas, así que se revalidan todas. */
 function revalidarVistasDeCuentas(): void {
   revalidatePath("/cuentas");
-  revalidarVistasDeRegistros();
-  revalidatePath("/base");
+  revalidarVistasDeLineaBase();
 }
 
 /** El nombre es único en la base; el error crudo de Postgres no se entiende. */

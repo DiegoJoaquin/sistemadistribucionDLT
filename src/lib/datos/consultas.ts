@@ -310,6 +310,12 @@ export interface Catastro {
   cruzadas: SerieCruzada[];
   mejores: DestacadaCatastro[];
   peores: DestacadaCatastro[];
+  /**
+   * §4.3 — visitas al perfil y vistas de seguidores/no seguidores, como
+   * promedio por publicación del período. Una línea por cuenta que tenga
+   * alguna cargada; van dentro del bloque de esa cuenta en el reporte.
+   */
+  perfil: LineaPerfil[];
   publicaciones: number;
   /** Cuántas series distintas salieron en el período. */
   series: number;
@@ -375,6 +381,11 @@ export async function catastroDelPeriodo(
     cruzadas: seriesCruzadas(bloques),
     mejores,
     peores,
+    // Solo las cuentas que cargaron alguna: las tres métricas van a mano y lo
+    // habitual es que falten (§4.1).
+    perfil: conActividad
+      .map((c) => construirLineaPerfil(filas, c))
+      .filter((l) => !l.sinDatos),
     publicaciones: filas.reduce((n, f) => n + f.publicaciones, 0),
     series,
     hayAlgo: filas.length > 0,

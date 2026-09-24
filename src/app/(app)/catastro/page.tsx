@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { BloqueCatastro } from "@/componentes/BloqueCatastro";
 import { Delta } from "@/componentes/Delta";
+import { NavegacionSemana } from "@/componentes/NavegacionSemana";
 import { SeriesCruzadas } from "@/componentes/SeriesCruzadas";
 import { Insignia, Nota, Vacio } from "@/componentes/ui";
 import { catastroDelPeriodo } from "@/lib/datos/consultas";
@@ -10,9 +11,7 @@ import {
   hoyISO,
   mesLargo,
   rotularSemana,
-  semanaAnterior,
   semanaDe,
-  semanaSiguiente,
   type Semana,
 } from "@/lib/dominio/formato";
 
@@ -21,10 +20,6 @@ export const metadata = { title: "Catastro semanal · KPIs DLT" };
 function primero(v: string | string[] | undefined): string | undefined {
   const s = Array.isArray(v) ? v[0] : v;
   return s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : undefined;
-}
-
-function enlace(s: Semana): string {
-  return `/catastro?semana=${s.desde}`;
 }
 
 /** ¿La línea base cubre alguno de los días de la semana? */
@@ -38,11 +33,6 @@ export default async function PaginaCatastro(props: PageProps<"/catastro">) {
   const hoy = hoyISO();
 
   const semana = semanaDe(primero(sp.semana) ?? hoy);
-  const anterior = semanaAnterior(semana);
-  const siguiente = semanaSiguiente(semana);
-  // No tiene sentido ofrecer una semana que todavía no empezó.
-  const haySiguiente = siguiente.desde <= hoy;
-
   const catastro = await catastroDelPeriodo(semana.desde, semana.hasta);
 
   return (
@@ -55,21 +45,12 @@ export default async function PaginaCatastro(props: PageProps<"/catastro">) {
           </p>
         </div>
 
-        <nav className="flex items-center gap-2" aria-label="Semana">
-          <Link href={enlace(anterior)} className="boton-suave">
-            ← Semana anterior
+        <div className="flex flex-wrap items-center gap-2">
+          <NavegacionSemana semana={semana} ruta="/catastro" />
+          <Link href={`/reporte?semana=${semana.desde}`} className="boton">
+            Armar el reporte
           </Link>
-          {semana.desde !== semanaDe(hoy).desde && (
-            <Link href="/catastro" className="boton-suave">
-              Esta semana
-            </Link>
-          )}
-          {haySiguiente && (
-            <Link href={enlace(siguiente)} className="boton-suave">
-              Semana siguiente →
-            </Link>
-          )}
-        </nav>
+        </div>
       </div>
 
       {!catastro.base && (

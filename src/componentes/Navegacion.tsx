@@ -10,7 +10,7 @@ const ENLACES = [
   { href: "/historico", texto: "Histórico" },
   { href: "/perfil", texto: "Métricas de perfil" },
   { href: "/base", texto: "Línea base" },
-  { href: "/reporte", texto: "Reporte" },
+  { href: "/reporte", texto: "Reporte semanal" },
   { href: "/cuentas", texto: "Cuentas" },
 ] as const;
 

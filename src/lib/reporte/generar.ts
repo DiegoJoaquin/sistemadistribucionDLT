@@ -183,19 +183,33 @@ const H2 = (t: string) =>
     t,
   )}</h2>`;
 
-/** Una línea de KPI en el formato que ya usa el equipo. */
-function lineaKPI(nombre: string, valor: string, d: number | null): string {
+/**
+ * Una línea de KPI en el formato que ya usa el equipo.
+ *
+ * §9.4 — `valorCrudo` distingue dos cosas que salían idénticas y no lo son:
+ * que la métrica no se haya medido ese día, y que no haya línea base contra la
+ * que compararla. Antes las dos decían "(sin línea base)", culpando a la base
+ * cuando lo que faltaba era el dato.
+ */
+function lineaKPI(
+  nombre: string,
+  valorCrudo: number | null,
+  valor: string,
+  d: number | null,
+): string {
   const c = coloresDeltaHex(d);
   const comparacion =
-    d === null
-      ? `<span style="color:#8a8a82;font-size:13px">(sin línea base)</span>`
-      : `<span style="color:${c.texto};font-size:13px">(${porcentajeDelta(
-          d,
-        )} que promedio diario)</span>`;
+    valorCrudo === null
+      ? `<span style="color:#8a8a82;font-size:13px">(no se midió)</span>`
+      : d === null
+        ? `<span style="color:#8a8a82;font-size:13px">(sin línea base)</span>`
+        : `<span style="color:${c.texto};font-size:13px">(${porcentajeDelta(
+            d,
+          )} que promedio diario)</span>`;
   return `<tr>
     <td style="padding:3px 0;font-size:14px;color:#33332f">
       <span style="color:#6e6e68">${esc(nombre)}:</span>
-      <strong style="color:#1a1a18">${valor}</strong>
+      <strong style="color:${valorCrudo === null ? "#8a8a82" : "#1a1a18"}">${valor}</strong>
       ${comparacion}
     </td>
   </tr>`;
@@ -209,7 +223,7 @@ function lineaKPI(nombre: string, valor: string, d: number | null): string {
  * dato queda solo el guion, porque "— (sin línea base)" no dice nada útil.
  */
 function lineaPerfil(nombre: string, valor: number | null, texto: string): string {
-  if (valor !== null) return lineaKPI(nombre, texto, null);
+  if (valor !== null) return lineaKPI(nombre, valor, texto, null);
   return `<tr>
     <td style="padding:3px 0;font-size:14px;color:#33332f">
       <span style="color:#6e6e68">${esc(nombre)}:</span>
@@ -222,13 +236,29 @@ function bloqueKPI(l: LineaPanel, perfil: LineaPerfil | null): string {
   const conAlcance = tieneAlcanceRed(l.cuenta.red);
   const filas = [
     conAlcance
-      ? lineaKPI("Alcance", numero(l.dia.alcance), l.deltas.alcance)
+      ? lineaKPI("Alcance", l.dia.alcance, numero(l.dia.alcance), l.deltas.alcance)
       : `<tr><td style="padding:3px 0;font-size:13px;color:#8a8a82">Alcance: no lo entrega YouTube</td></tr>`,
-    lineaKPI("Visualizaciones", numero(l.dia.visualizaciones), l.deltas.visualizaciones),
-    lineaKPI("Interacciones", numero(l.dia.interacciones), l.deltas.interacciones),
-    lineaKPI("Engagement", porcentaje(l.dia.engagement), l.deltas.engagement),
+    lineaKPI(
+      "Visualizaciones",
+      l.dia.visualizaciones,
+      numero(l.dia.visualizaciones),
+      l.deltas.visualizaciones,
+    ),
+    lineaKPI(
+      "Interacciones",
+      l.dia.interacciones,
+      numero(l.dia.interacciones),
+      l.deltas.interacciones,
+    ),
+    lineaKPI(
+      "Engagement",
+      l.dia.engagement,
+      porcentaje(l.dia.engagement),
+      l.deltas.engagement,
+    ),
     lineaKPI(
       "Seguidores nuevos",
+      l.dia.nuevos_seguidores,
       numeroFino(l.dia.nuevos_seguidores),
       l.deltas.nuevos_seguidores,
     ),
@@ -434,16 +464,40 @@ export function textoPlano(r: Reporte): string {
   l.push("KPIS DEL DÍA POR PLATAFORMA");
   for (const b of r.bloques) {
     l.push(`  ${b.cuenta.nombre} (${b.publicaciones} publicaciones)`);
-    const linea = (n: string, v: string, d: number | null) =>
-      `    ${n}: ${v}${d === null ? "" : ` (${porcentajeDelta(d)} que promedio diario)`}`;
+    // §9.4 — "no se midió" y "no hay base" son dos cosas distintas.
+    const linea = (n: string, crudo: number | null, v: string, d: number | null) => {
+      if (crudo === null) return `    ${n}: ${v} (no se midió)`;
+      return `    ${n}: ${v}${d === null ? "" : ` (${porcentajeDelta(d)} que promedio diario)`}`;
+    };
     if (tieneAlcanceRed(b.cuenta.red)) {
-      l.push(linea("Alcance", numero(b.dia.alcance), b.deltas.alcance));
+      l.push(linea("Alcance", b.dia.alcance, numero(b.dia.alcance), b.deltas.alcance));
     }
-    l.push(linea("Visualizaciones", numero(b.dia.visualizaciones), b.deltas.visualizaciones));
-    l.push(linea("Interacciones", numero(b.dia.interacciones), b.deltas.interacciones));
-    l.push(linea("Engagement", porcentaje(b.dia.engagement), b.deltas.engagement));
     l.push(
-      linea("Seguidores nuevos", numeroFino(b.dia.nuevos_seguidores), b.deltas.nuevos_seguidores),
+      linea(
+        "Visualizaciones",
+        b.dia.visualizaciones,
+        numero(b.dia.visualizaciones),
+        b.deltas.visualizaciones,
+      ),
+    );
+    l.push(
+      linea(
+        "Interacciones",
+        b.dia.interacciones,
+        numero(b.dia.interacciones),
+        b.deltas.interacciones,
+      ),
+    );
+    l.push(
+      linea("Engagement", b.dia.engagement, porcentaje(b.dia.engagement), b.deltas.engagement),
+    );
+    l.push(
+      linea(
+        "Seguidores nuevos",
+        b.dia.nuevos_seguidores,
+        numeroFino(b.dia.nuevos_seguidores),
+        b.deltas.nuevos_seguidores,
+      ),
     );
 
     // §4.3 — métricas de perfil, en el mismo bloque y con el mismo formato.
