@@ -14,6 +14,7 @@ import {
 import {
   catastroDelPeriodo,
   clientePorId,
+  graficosDeLaSemana,
   informeDeCliente,
   listarCuentas,
 } from "./consultas";
@@ -925,8 +926,11 @@ export async function enviarReporteSemanal(
     return { ok: false, mensaje: e instanceof Error ? e.message : "Sin destinatarios." };
   }
 
-  const catastro = await catastroDelPeriodo(semana.desde, semana.hasta);
-  const reporte = construirReporteSemanal(catastro);
+  const [catastro, graficos] = await Promise.all([
+    catastroDelPeriodo(semana.desde, semana.hasta),
+    graficosDeLaSemana(semana.desde),
+  ]);
+  const reporte = construirReporteSemanal(catastro, graficos);
 
   /*
    * Un correo vacío es peor que no mandar nada: el jefe abre un reporte que

@@ -5,7 +5,11 @@ import { VistaPreviaReporte } from "@/componentes/VistaPreviaReporte";
 import { Nota, Vacio } from "@/componentes/ui";
 import { faltantesCorreo } from "@/lib/correo/entorno";
 import { parsearDestinatarios } from "@/lib/correo/direcciones";
-import { catastroDelPeriodo, enviosDeSemana } from "@/lib/datos/consultas";
+import {
+  catastroDelPeriodo,
+  enviosDeSemana,
+  graficosDeLaSemana,
+} from "@/lib/datos/consultas";
 import { hoyISO, rotularSemana, semanaDe } from "@/lib/dominio/formato";
 import {
   construirReporteSemanal,
@@ -25,12 +29,13 @@ export default async function PaginaReporte(props: PageProps<"/reporte">) {
   const sp = await props.searchParams;
   const semana = semanaDe(primero(sp.semana) ?? hoyISO());
 
-  const [catastro, envios] = await Promise.all([
+  const [catastro, envios, graficos] = await Promise.all([
     catastroDelPeriodo(semana.desde, semana.hasta),
     enviosDeSemana(semana.desde),
+    graficosDeLaSemana(semana.desde),
   ]);
 
-  const reporte = construirReporteSemanal(catastro);
+  const reporte = construirReporteSemanal(catastro, graficos);
   const html = htmlSemanal(reporte, { urlBase: urlPublica() });
   const texto = textoSemanal(reporte);
 

@@ -22,10 +22,17 @@ import {
   seriesCruzadas,
 } from "@/lib/dominio/catastro";
 import {
+  comparativaCuentas,
+  evolucionSemanal,
+  type FilaAnalitica,
+} from "@/lib/dominio/analitica";
+import {
   construirInforme,
   type FilaInforme,
   type Informe,
 } from "@/lib/dominio/informe";
+import { comparativaHTML, evolucionHTML } from "@/lib/reporte/graficos-correo";
+import type { GraficosSemanales } from "@/lib/reporte/semanal";
 import { type Categoria } from "@/lib/dominio/categorias";
 import type { Plataforma } from "@/lib/dominio/plataformas";
 import {
@@ -35,6 +42,7 @@ import {
   type Red,
   REDES,
 } from "@/lib/dominio/redes";
+import { sumarDias } from "@/lib/dominio/formato";
 import { supabaseServidor } from "@/lib/supabase/servidor";
 import type {
   CuentaRow,
@@ -588,6 +596,61 @@ export async function informeDeCliente(
       { porHashtag, porCuenta },
     ),
     base,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Gráficos del reporte semanal                                        */
+/* ------------------------------------------------------------------ */
+
+/** Cuántas semanas hacia atrás cubren los gráficos del correo. */
+export const SEMANAS_DEL_GRAFICO = 8;
+
+/**
+ * Los gráficos que van dentro del reporte semanal.
+ *
+ * Miran más atrás que el reporte a propósito: una semana sola no muestra
+ * ninguna tendencia, y lo que se le manda a la gerencia es justamente si venimos
+ * subiendo o bajando. El resto del correo sigue siendo de la semana.
+ *
+ * La métrica de titular es el alcance, que es la que el equipo mira primero.
+ */
+export async function graficosDeLaSemana(
+  lunes: string,
+): Promise<GraficosSemanales | undefined> {
+  const desde = sumarDias(lunes, -7 * (SEMANAS_DEL_GRAFICO - 1));
+  const hasta = sumarDias(lunes, 6);
+
+  const [registros, cuentas] = await Promise.all([
+    listarRegistrosDelRango(desde, hasta),
+    listarCuentas(),
+  ]);
+
+  const indice = cuentasPorId(cuentas);
+  const filas: FilaAnalitica[] = registros.flatMap((r) => {
+    const cuenta = indice.get(r.cuenta_id);
+    return cuenta ? [{ ...aFilaCalculo(r, cuenta), fecha: r.fecha }] : [];
+  });
+
+  if (filas.length === 0) return undefined;
+
+  const conActividad = cuentas.filter((c) => filas.some((f) => f.cuentaId === c.id));
+
+  const evolucion = evolucionSemanal(filas, conActividad, "alcance", { desde, hasta });
+  const comparativa = comparativaCuentas(filas, conActividad, "alcance");
+
+  return {
+    evolucion: evolucionHTML(evolucion, SEMANAS_DEL_GRAFICO),
+    comparativa: comparativaHTML(
+      comparativa.map((b) => ({
+        nombre: b.nombre,
+        valor: b.valor,
+        publicaciones: b.publicaciones,
+        noComparable: b.noComparable,
+      })),
+      "alcance",
+    ),
+    semanas: SEMANAS_DEL_GRAFICO,
   };
 }
 

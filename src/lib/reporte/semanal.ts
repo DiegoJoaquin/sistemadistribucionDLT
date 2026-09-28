@@ -66,9 +66,29 @@ export interface ReporteSemanal {
   series: number;
   cuentas: number;
   hayDatos: boolean;
+  /**
+   * Los gráficos del correo, ya armados en HTML.
+   *
+   * Vienen de afuera porque necesitan varias semanas de registros y el reporte
+   * solo conoce una. Si no se pasan, el correo sale como antes: el catastro no
+   * depende de ellos.
+   */
+  graficos?: GraficosSemanales;
 }
 
-export function construirReporteSemanal(catastro: Catastro): ReporteSemanal {
+export interface GraficosSemanales {
+  /** Evolución de la métrica de titular, semana a semana y por cuenta. */
+  evolucion: string;
+  /** Comparación entre cuentas del período del gráfico. */
+  comparativa: string;
+  /** Cuántas semanas cubre, para poder decirlo. */
+  semanas: number;
+}
+
+export function construirReporteSemanal(
+  catastro: Catastro,
+  graficos?: GraficosSemanales,
+): ReporteSemanal {
   const mesBase = catastro.base?.mes.slice(0, 7) ?? null;
 
   return {
@@ -88,6 +108,7 @@ export function construirReporteSemanal(catastro: Catastro): ReporteSemanal {
     series: catastro.series,
     cuentas: catastro.bloques.length,
     hayDatos: catastro.hayAlgo,
+    graficos,
   };
 }
 
@@ -400,6 +421,14 @@ export function htmlSemanal(
     "Lo que más bajó",
     "Ninguna serie quedó bajo su promedio histórico.",
   )}
+
+  ${
+    r.graficos
+      ? `${r.graficos.evolucion}
+  ${r.graficos.comparativa}
+  <p class="sm" style="margin:6px 0 16px">Los dos gráficos cubren las últimas ${r.graficos.semanas} semanas, no solo esta: una semana sola no muestra tendencia.</p>`
+      : ""
+  }
 
   ${tablaCruzadas(r.cruzadas)}
 
