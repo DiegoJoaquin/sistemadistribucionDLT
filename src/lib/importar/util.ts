@@ -152,6 +152,52 @@ export function fechaDeCelda(v: unknown, orden: OrdenFecha): string | null {
   return desdeCeldaExcel(v) ?? desdeTextoFecha(v, orden);
 }
 
+export interface OrdenDetectado {
+  orden: OrdenFecha;
+  /** true si los datos lo demuestran; false si se usó el valor por defecto. */
+  seguro: boolean;
+}
+
+/**
+ * Deduce si las fechas del archivo son DD/MM o MM/DD mirando los datos.
+ *
+ * Es la diferencia entre el 3 de julio y el 7 de marzo, y se equivoca en
+ * silencio: todo lo anterior al día 13 se mueve de día, y en los bordes de
+ * mes. Hasta acá el orden iba escrito a mano —Meta MM/DD, YouTube DD/MM—
+ * verificado contra los archivos en castellano. Meta también exporta en
+ * inglés, y suponer que el orden no cambia con el idioma es justo la clase de
+ * suposición que este proyecto ya pagó cara.
+ *
+ * Un solo día mayor que 12 en la primera posición prueba que es DD/MM, y en la
+ * segunda que es MM/DD. Con un archivo de un mes completo siempre hay alguno.
+ * Si no lo hay —un puñado de publicaciones, todas antes del día 13— queda
+ * ambiguo y se usa el valor por defecto, diciéndolo.
+ */
+export function detectarOrdenFecha(
+  valores: readonly unknown[],
+  porDefecto: OrdenFecha,
+): OrdenDetectado {
+  let pruebaDMY = 0;
+  let pruebaMDY = 0;
+
+  for (const v of valores) {
+    if (typeof v !== "string") continue;
+    const m = v.trim().match(/^(\d{1,2})[/-](\d{1,2})[/-]\d{2,4}/);
+    if (!m) continue;
+
+    const primero = Number(m[1]);
+    const segundo = Number(m[2]);
+    if (primero > 12) pruebaDMY += 1;
+    if (segundo > 12) pruebaMDY += 1;
+  }
+
+  // Las dos cosas a la vez es imposible: el archivo está mezclado o corrupto.
+  if (pruebaDMY > 0 && pruebaMDY > 0) return { orden: porDefecto, seguro: false };
+  if (pruebaDMY > 0) return { orden: "DMY", seguro: true };
+  if (pruebaMDY > 0) return { orden: "MDY", seguro: true };
+  return { orden: porDefecto, seguro: false };
+}
+
 /**
  * Número de una celda. §9.4: vacío, guion o texto no numérico devuelven null,
  * jamás 0. Un "0" explícito sí es 0.

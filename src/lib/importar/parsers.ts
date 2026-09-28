@@ -10,8 +10,10 @@ import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import type { Categoria } from "@/lib/dominio/categorias";
 import { clasificarSiSePuede } from "./clasificar";
+import { columnasDe, formatoDePublicacion, META } from "./columnas";
 import type { PublicacionImportada, ResultadoImport } from "./tipos";
 import {
+  detectarOrdenFecha,
   fechaDeCelda,
   mesDe,
   num,
@@ -27,13 +29,6 @@ type Fila = Record<string, unknown>;
 /* Meta Business Suite — CSV (Instagram DLT y DBF)                     */
 /* ------------------------------------------------------------------ */
 
-/** §5.1: mapeo del "Tipo de publicación" de Meta a nuestro formato. */
-const FORMATO_META: Record<string, Categoria> = {
-  "Reel de Instagram": "Reel",
-  "Imagen de Instagram": "Imagen",
-  "Secuencia de Instagram": "Carrusel",
-};
-
 export function leerMetaCSV(contenido: string): ResultadoImport {
   const sinBOM = contenido.replace(/^﻿/, "");
   const { data } = Papa.parse<Fila>(sinBOM, {
@@ -41,49 +36,74 @@ export function leerMetaCSV(contenido: string): ResultadoImport {
     skipEmptyLines: true,
   });
 
+  const col = columnasDe(data);
+
   const cuenta = texto(
-    data.find((f) => texto(f["Nombre de usuario de la cuenta"]))?.[
-      "Nombre de usuario de la cuenta"
+    data.find((f) => texto(col.valor(f, ...META.cuenta)))?.[
+      col.clave(...META.cuenta) ?? ""
     ],
   );
+
   if (!cuenta) {
+    /*
+     * Listar los encabezados que SÍ vino es lo que convierte esto en algo
+     * diagnosticable. Antes decía solo que faltaba la columna, y con un
+     * archivo en otro idioma no había forma de avanzar sin abrir el CSV.
+     */
+    const vistos = col.encabezados.slice(0, 12).join(", ");
     throw new Error(
-      'El CSV no trae la columna "Nombre de usuario de la cuenta", así que no puedo saber de qué cuenta es. ¿Es la exportación de publicaciones de Meta Business Suite?',
+      `El CSV no trae una columna con el usuario de la cuenta (${META.cuenta.join(
+        " o ",
+      )}), así que no puedo saber de qué cuenta es. Los encabezados que trae son: ${
+        vistos || "ninguno"
+      }. ¿Es la exportación de publicaciones de Meta Business Suite?`,
     );
   }
+
+  /*
+   * El orden de la fecha se deduce de los datos en vez de darlo por sentado.
+   * Estaba fijo en MM/DD porque así venían los archivos en castellano, pero
+   * Meta también exporta en inglés y no hay nada que garantice que el orden no
+   * cambie con el idioma.
+   */
+  const claveFecha = col.clave(...META.publicado);
+  const orden = detectarOrdenFecha(
+    claveFecha === null ? [] : data.map((f) => f[claveFecha]),
+    "MDY",
+  );
+
   const publicaciones: PublicacionImportada[] = [];
   for (const f of data) {
-    // Meta usa MM/DD/YYYY. YouTube usa DD/MM/YYYY. No son intercambiables.
-    const publicado_en = fechaDeCelda(f["Hora de publicación"], "MDY");
+    const publicado_en = fechaDeCelda(col.valor(f, ...META.publicado), orden.orden);
     if (!publicado_en) continue;
 
-    const caption = texto(f["Descripción"]);
+    const caption = texto(col.valor(f, ...META.caption));
     const clas = clasificarSiSePuede(cuenta, caption);
 
-    const me_gusta = num(f["Me gusta"]);
-    const comentarios = num(f["Comentarios"]);
-    const compartidos = num(f["Veces que se compartió"]);
-    const guardados = num(f["Veces que se guardó"]);
+    const me_gusta = num(col.valor(f, ...META.meGusta));
+    const comentarios = num(col.valor(f, ...META.comentarios));
+    const compartidos = num(col.valor(f, ...META.compartidos));
+    const guardados = num(col.valor(f, ...META.guardados));
 
     publicaciones.push({
       publicado_en,
-      formato: FORMATO_META[String(f["Tipo de publicación"] ?? "").trim()] ?? null,
+      formato: formatoDePublicacion(col.valor(f, ...META.tipo)),
       tipo: clas?.tipo ?? null,
       tipo_auto: clas?.tipo ?? null,
       serie_hashtag: clas?.serie ?? primerHashtag(caption),
       caption,
-      duracion_s: num(f["Duración (segundos)"]),
-      visualizaciones: num(f["Visualizaciones"]),
-      alcance: num(f["Alcance"]),
+      duracion_s: num(col.valor(f, ...META.duracion)),
+      visualizaciones: num(col.valor(f, ...META.visualizaciones)),
+      alcance: num(col.valor(f, ...META.alcance)),
       me_gusta,
       comentarios,
       compartidos,
       guardados,
       favoritos: null,
-      nuevos_seguidores: num(f["Seguimientos"]),
+      nuevos_seguidores: num(col.valor(f, ...META.seguidores)),
       interacciones: sumaOpcional(me_gusta, comentarios, compartidos, guardados),
-      enlace: texto(f["Enlace permanente"]),
-      id_externo: texto(f["Identificador de la publicación"]),
+      enlace: texto(col.valor(f, ...META.enlace)),
+      id_externo: texto(col.valor(f, ...META.id)),
       fuente: "meta",
     });
   }
@@ -94,7 +114,13 @@ export function leerMetaCSV(contenido: string): ResultadoImport {
     cuenta,
     publicaciones,
     meses: mesesDe(publicaciones),
-    advertencias: [],
+    advertencias: orden.seguro
+      ? []
+      : [
+          `Ninguna fecha del archivo tiene el día mayor que 12, así que no pude deducir si el formato es día/mes o mes/día; asumí ${
+            orden.orden === "MDY" ? "mes/día" : "día/mes"
+          }, que es lo que usa Meta. Revisa que las fechas de las publicaciones sean las correctas.`,
+        ],
   };
 }
 
