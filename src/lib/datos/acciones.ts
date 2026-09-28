@@ -45,13 +45,31 @@ import {
   rangoDe,
 } from "@/lib/importar/a-registro";
 import { resolverCuenta } from "@/lib/importar/cuentas";
+import { leerResultadoImport } from "@/lib/importar/esquema";
 import { cruzar } from "@/lib/importar/cruzar";
-import { leerArchivo } from "@/lib/importar/parsers";
 import { leerRegistroExcel } from "@/lib/importar/registro-excel";
 import type { PublicacionImportada } from "@/lib/importar/tipos";
 import { mesDe } from "@/lib/importar/util";
 import { exigirSesion, supabaseServidor } from "@/lib/supabase/servidor";
 import type { PublicacionBaseRow } from "@/lib/supabase/tipos-db";
+
+/**
+ * El JSON que mandó el navegador con las filas del archivo.
+ *
+ * Va como campo de texto del formulario y no como archivo: el archivo se lee
+ * en el navegador, así que lo que sube son las filas extraídas. Con un export
+ * de nueve meses eso es la diferencia entre un megabyte y siete — y siete no
+ * pasaban, dejando la página en blanco sin ningún mensaje.
+ */
+function datosDe(fd: FormData): unknown {
+  const crudo = fd.get("datos");
+  if (typeof crudo !== "string" || crudo === "") return null;
+  try {
+    return JSON.parse(crudo);
+  } catch {
+    return null;
+  }
+}
 
 export interface Resultado {
   ok: boolean;
@@ -238,22 +256,18 @@ export async function importarArchivo(
 ): Promise<ResultadoImportar> {
   const { usuarioId } = await exigirSesion();
 
-  const archivo = fd.get("archivo");
   const mesElegido = String(fd.get("mes") ?? "").trim();
-
-  if (!(archivo instanceof File) || archivo.size === 0) {
-    return { ok: false, mensaje: "Elige un archivo para importar." };
-  }
   if (!/^\d{4}-\d{2}$/.test(mesElegido)) {
     return { ok: false, mensaje: "Elige el mes de la línea base." };
   }
 
-  let leido;
-  try {
-    leido = leerArchivo(archivo.name, await archivo.arrayBuffer());
-  } catch (e) {
-    return { ok: false, mensaje: e instanceof Error ? e.message : "No pude leer el archivo." };
-  }
+  /*
+   * El archivo lo leyó el navegador; acá llegan las filas ya extraídas. Se
+   * validan igual: lo que manda un cliente nunca se da por bueno.
+   */
+  const lectura = leerResultadoImport(datosDe(fd));
+  if (!lectura.ok) return { ok: false, mensaje: lectura.mensaje };
+  const leido = lectura.datos;
 
   // A qué cuenta corresponde el archivo. Antes salía de un enum de cinco
   // valores; ahora se busca por el @usuario, así que funciona con cualquiera.
@@ -573,11 +587,6 @@ export async function importarPublicaciones(
 ): Promise<ResultadoImportRegistro> {
   const { usuarioId } = await exigirSesion();
 
-  const archivo = fd.get("archivo");
-  if (!(archivo instanceof File) || archivo.size === 0) {
-    return { ok: false, mensaje: "Elige un archivo para importar." };
-  }
-
   const rango: RangoFechas = {};
   const desdePedido = String(fd.get("desde") ?? "").trim();
   const hastaPedido = String(fd.get("hasta") ?? "").trim();
@@ -587,15 +596,9 @@ export async function importarPublicaciones(
     return { ok: false, mensaje: "El desde es posterior al hasta." };
   }
 
-  let leido;
-  try {
-    leido = leerArchivo(archivo.name, await archivo.arrayBuffer());
-  } catch (e) {
-    return {
-      ok: false,
-      mensaje: e instanceof Error ? e.message : "No pude leer el archivo.",
-    };
-  }
+  const lectura = leerResultadoImport(datosDe(fd));
+  if (!lectura.ok) return { ok: false, mensaje: lectura.mensaje };
+  const leido = lectura.datos;
 
   const resuelta = resolverCuenta(await listarCuentas(), leido.detectada);
   if (!resuelta.ok) return { ok: false, mensaje: resuelta.motivo };

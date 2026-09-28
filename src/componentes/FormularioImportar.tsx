@@ -3,12 +3,13 @@
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { importarArchivo, type ResultadoImportar } from "@/lib/datos/acciones";
+import type { ResultadoImport } from "@/lib/importar/tipos";
 
-function Boton() {
+function Boton({ leyendo }: { leyendo: boolean }) {
   const { pending } = useFormStatus();
   return (
-    <button type="submit" className="boton" disabled={pending}>
-      {pending ? "Leyendo archivo…" : "Importar"}
+    <button type="submit" className="boton" disabled={pending || leyendo}>
+      {pending ? "Importando…" : leyendo ? "Leyendo archivo…" : "Importar"}
     </button>
   );
 }
@@ -19,9 +20,52 @@ export function FormularioImportar({ mesPorDefecto }: { mesPorDefecto: string })
     null,
   );
   const [nombre, setNombre] = useState<string | null>(null);
+  const [leyendo, setLeyendo] = useState(false);
+  const [lectura, setLectura] = useState<ResultadoImport | null>(null);
+  const [payload, setPayload] = useState<string | null>(null);
+  const [errorLectura, setErrorLectura] = useState<string | null>(null);
+
+  /*
+   * El archivo se lee en el navegador y al servidor solo viajan las filas.
+   * Subir el archivo entero dejaba la página en blanco con los exports
+   * largos: Next rechaza los cuerpos de más de 1 MB antes de ejecutar la
+   * acción, así que no llegaba a mostrarse ningún error.
+   */
+  const elegir = async (archivo: File | undefined) => {
+    setLectura(null);
+    setPayload(null);
+    setErrorLectura(null);
+    setNombre(archivo?.name ?? null);
+    if (!archivo) return;
+
+    setLeyendo(true);
+    try {
+      const { aPayload, leerEnNavegador } = await import("@/lib/importar/en-navegador");
+      const r = await leerEnNavegador(archivo);
+      if (!r.ok) {
+        setErrorLectura(r.mensaje);
+        return;
+      }
+      const p = aPayload(r.resultado);
+      if (!p.ok) {
+        setErrorLectura(p.mensaje);
+        return;
+      }
+      setLectura(r.resultado);
+      setPayload(p.datos);
+    } finally {
+      setLeyendo(false);
+    }
+  };
 
   return (
-    <form action={accion} className="tarjeta p-4">
+    <form
+      action={(fd) => {
+        if (payload) fd.set("datos", payload);
+        return accion(fd);
+      }}
+      className="tarjeta p-4"
+    >
       <h2 className="text-sm font-semibold">Importar una exportación</h2>
       <p className="mt-1 text-sm text-[var(--color-tinta-suave)]">
         Sube el archivo tal cual lo entrega la plataforma. La cuenta y la red se
@@ -35,11 +79,10 @@ export function FormularioImportar({ mesPorDefecto }: { mesPorDefecto: string })
           </label>
           <input
             id="archivo"
-            name="archivo"
             type="file"
             accept=".csv,.xlsx"
             required
-            onChange={(e) => setNombre(e.target.files?.[0]?.name ?? null)}
+            onChange={(e) => void elegir(e.target.files?.[0])}
             className="campo file:mr-3 file:rounded file:border-0 file:bg-[var(--color-realce)] file:px-2 file:py-1 file:text-sm"
           />
           {nombre && (
@@ -61,8 +104,32 @@ export function FormularioImportar({ mesPorDefecto }: { mesPorDefecto: string })
           />
         </div>
 
-        <Boton />
+        <Boton leyendo={leyendo} />
       </div>
+
+      {errorLectura && (
+        <p
+          role="alert"
+          className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900"
+        >
+          {errorLectura}
+        </p>
+      )}
+
+      {lectura && (
+        <p className="mt-3 rounded-md border border-[var(--color-filete)] bg-[var(--color-realce)] px-3 py-2 text-[13px]">
+          <strong>{lectura.publicaciones.length}</strong>{" "}
+          {lectura.publicaciones.length === 1 ? "publicación" : "publicaciones"} de{" "}
+          <strong>@{(lectura.cuenta ?? "").replace(/^@/, "")}</strong> ·{" "}
+          {lectura.detectada.red}
+          {lectura.meses.length > 0 && (
+            <>
+              {" "}
+              · meses: {lectura.meses.join(", ")}
+            </>
+          )}
+        </p>
+      )}
 
       {estado && (
         <div

@@ -1,9 +1,22 @@
 /**
  * §5.1 — Lectores de los archivos que exporta cada plataforma.
  *
- * Corren en el servidor: `xlsx` pesa cerca de un mega y no tiene por qué viajar
- * al navegador. Cada lector devuelve el mismo `ResultadoImport`, con
- * advertencias explícitas sobre los campos que esa fuente no entrega.
+ * Corren en el NAVEGADOR, no en el servidor, y eso es un cambio deliberado.
+ *
+ * Antes el archivo se subía completo a una acción de servidor. Con un export
+ * de nueve meses —el de Voz del Cacique pesa 7 MB— la página se ponía en
+ * blanco: las acciones de servidor de Next rechazan los cuerpos de más de 1 MB
+ * ANTES de que corra el código de la acción, así que ni el try/catch ni el
+ * mensaje de error alcanzaban a ejecutarse. Y subir el límite no bastaba,
+ * porque la plataforma donde está desplegado tiene su propio tope, más bajo que
+ * el tamaño de estos archivos.
+ *
+ * Leyendo acá, al servidor solo viajan las filas extraídas, que pesan una
+ * fracción. El megabyte de `xlsx` se carga con un import dinámico y solo cuando
+ * alguien elige un archivo, así que no lo paga quien no importa nada.
+ *
+ * Cada lector devuelve el mismo `ResultadoImport`, con advertencias explícitas
+ * sobre los campos que esa fuente no entrega.
  */
 
 import Papa from "papaparse";

@@ -1,19 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useState } from "react";
 import { useFormStatus } from "react-dom";
+import { useActionState } from "react";
 import {
   importarPublicaciones,
   type ResultadoImportRegistro,
 } from "@/lib/datos/acciones";
 import { fechaCorta } from "@/lib/dominio/formato";
+import type { ResultadoImport } from "@/lib/importar/tipos";
 
-function Boton() {
+function Boton({ leyendo }: { leyendo: boolean }) {
   const { pending } = useFormStatus();
   return (
-    <button type="submit" className="boton" disabled={pending}>
-      {pending ? "Leyendo archivo…" : "Cargar publicaciones"}
+    <button type="submit" className="boton" disabled={pending || leyendo}>
+      {pending ? "Guardando…" : leyendo ? "Leyendo archivo…" : "Cargar publicaciones"}
     </button>
   );
 }
@@ -29,9 +31,14 @@ const NOMBRE_FUENTE: Record<string, string> = {
 /**
  * Subir la exportación y que el registro se llene solo.
  *
- * Va plegado por defecto: lo habitual sigue siendo cargar una publicación
- * suelta con el formulario de abajo, y una zona de archivos abierta encima de
- * todo desplazaría eso fuera de la pantalla.
+ * El archivo se lee ACÁ, en el navegador, y al servidor solo viajan las filas
+ * extraídas. Antes se subía el archivo entero a una acción de servidor, y con
+ * un export de varios meses la página se ponía en blanco: Next rechaza los
+ * cuerpos de más de 1 MB antes de ejecutar la acción, así que no había forma de
+ * mostrar un error.
+ *
+ * De paso se gana algo: como el archivo ya está leído, se puede mostrar qué
+ * trae —cuenta, publicaciones, período— ANTES de escribir nada.
  */
 export function FormularioImportarPublicaciones({
   rango,
@@ -44,8 +51,41 @@ export function FormularioImportarPublicaciones({
     null,
   );
   const [abierto, setAbierto] = useState(false);
-  const [nombre, setNombre] = useState<string | null>(null);
   const [limitar, setLimitar] = useState(false);
+
+  const [nombre, setNombre] = useState<string | null>(null);
+  const [leyendo, setLeyendo] = useState(false);
+  const [lectura, setLectura] = useState<ResultadoImport | null>(null);
+  const [payload, setPayload] = useState<string | null>(null);
+  const [errorLectura, setErrorLectura] = useState<string | null>(null);
+
+  const elegir = async (archivo: File | undefined) => {
+    setLectura(null);
+    setPayload(null);
+    setErrorLectura(null);
+    setNombre(archivo?.name ?? null);
+    if (!archivo) return;
+
+    setLeyendo(true);
+    try {
+      // Import dinámico: el megabyte de `xlsx` solo se carga si hay archivo.
+      const { aPayload, leerEnNavegador } = await import("@/lib/importar/en-navegador");
+      const r = await leerEnNavegador(archivo);
+      if (!r.ok) {
+        setErrorLectura(r.mensaje);
+        return;
+      }
+      const p = aPayload(r.resultado);
+      if (!p.ok) {
+        setErrorLectura(p.mensaje);
+        return;
+      }
+      setLectura(r.resultado);
+      setPayload(p.datos);
+    } finally {
+      setLeyendo(false);
+    }
+  };
 
   return (
     <div className="tarjeta p-4">
@@ -56,9 +96,7 @@ export function FormularioImportarPublicaciones({
         aria-expanded={abierto}
       >
         <span>
-          <span className="text-sm font-semibold">
-            Cargar desde una exportación
-          </span>
+          <span className="text-sm font-semibold">Cargar desde una exportación</span>
           <span className="mt-0.5 block text-xs text-[var(--color-tinta-tenue)]">
             Sube el archivo de Meta, Iconosquare, TikTok o YouTube y las filas se
             crean solas, una por publicación
@@ -70,7 +108,13 @@ export function FormularioImportarPublicaciones({
       </button>
 
       {abierto && (
-        <form action={accion} className="mt-3 border-t border-[var(--color-filete)] pt-3">
+        <form
+          action={(fd) => {
+            if (payload) fd.set("datos", payload);
+            return accion(fd);
+          }}
+          className="mt-3 border-t border-[var(--color-filete)] pt-3"
+        >
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
             <div className="space-y-1">
               <label className="etiqueta" htmlFor="imp-archivo">
@@ -78,11 +122,10 @@ export function FormularioImportarPublicaciones({
               </label>
               <input
                 id="imp-archivo"
-                name="archivo"
                 type="file"
                 accept=".csv,.xlsx"
                 required
-                onChange={(e) => setNombre(e.target.files?.[0]?.name ?? null)}
+                onChange={(e) => void elegir(e.target.files?.[0])}
                 className="campo file:mr-3 file:rounded file:border-0 file:bg-[var(--color-realce)] file:px-2 file:py-1 file:text-sm"
               />
               {nombre && (
@@ -91,7 +134,7 @@ export function FormularioImportarPublicaciones({
                 </p>
               )}
             </div>
-            <Boton />
+            <Boton leyendo={leyendo} />
           </div>
 
           <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-tinta-tenue)]">
@@ -103,6 +146,38 @@ export function FormularioImportarPublicaciones({
             . Subir dos veces el mismo archivo no duplica nada: actualiza las
             publicaciones que ya estaban.
           </p>
+
+          {leyendo && (
+            <p className="mt-2 text-[13px] text-[var(--color-tinta-suave)]">
+              Leyendo el archivo…
+            </p>
+          )}
+
+          {errorLectura && (
+            <p
+              role="alert"
+              className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900"
+            >
+              {errorLectura}
+            </p>
+          )}
+
+          {/* Ya se leyó: se puede decir qué trae antes de escribir nada. */}
+          {lectura && (
+            <p className="mt-3 rounded-md border border-[var(--color-filete)] bg-[var(--color-realce)] px-3 py-2 text-[13px]">
+              <strong>{lectura.publicaciones.length}</strong>{" "}
+              {lectura.publicaciones.length === 1 ? "publicación" : "publicaciones"} de{" "}
+              <strong>@{(lectura.cuenta ?? "").replace(/^@/, "")}</strong> ·{" "}
+              {lectura.detectada.red}
+              {lectura.meses.length > 0 && (
+                <>
+                  {" "}
+                  · {lectura.meses[0]}
+                  {lectura.meses.length > 1 && ` a ${lectura.meses.at(-1)}`}
+                </>
+              )}
+            </p>
+          )}
 
           <div className="mt-3">
             <label className="flex items-center gap-2 text-[13px]">
