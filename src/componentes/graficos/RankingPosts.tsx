@@ -90,7 +90,7 @@ export function RankingPosts({ datos }: { datos: Ranking }) {
               textAnchor="end"
               className="fill-[var(--color-tinta-tenue)] text-[10px]"
             >
-              {d.punto.cuenta} · {fechaCorta(d.punto.fecha)} · {etiquetaDeGrupo(d.grupo)}
+              {d.punto.cuenta} · {fechaCorta(d.punto.fecha)} · {etiquetaDeGrupo(d.grupo, datos.agrupacion)}
             </text>
 
             <rect

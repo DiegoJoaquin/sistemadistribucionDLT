@@ -267,7 +267,7 @@ export function Dispersion({ datos }: { datos: DatosDispersion }) {
               style={{ backgroundColor: activo.color ?? APAGADO }}
             />
             <span className="text-[var(--color-tinta-tenue)]">
-              {etiquetaDeGrupo(activo.grupo)}
+              {etiquetaDeGrupo(activo.grupo, datos.agrupacion)}
             </span>
           </p>
         </div>

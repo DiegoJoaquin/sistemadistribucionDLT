@@ -11,13 +11,19 @@ import {
   construirDispersion,
   construirDistribucion,
   construirRanking,
+  construirTelarana,
   cuantil,
   escalaDe,
   gruposDe,
+  etiquetaDeGrupo,
   MAXIMO_COLORES,
+  MAXIMO_POLIGONOS,
   mediana,
   MINIMO_CAJA,
+  NOMBRE_GRAFICO,
+  PREGUNTA_GRAFICO,
   promedio,
+  promedioDeNivel,
   type PublicacionPunto,
   reelesReactivos,
   SIN_CLASIFICAR,
@@ -726,7 +732,341 @@ describe("usaColorPorGrupo", () => {
     expect(usaColorPorGrupo("distribucion")).toBe(false);
   });
 
-  it("los cuatro gráficos tienen nombre y pregunta", () => {
-    expect(TIPOS_GRAFICO).toHaveLength(4);
+  it("todos los gráficos tienen nombre y pregunta", () => {
+    for (const t of TIPOS_GRAFICO) {
+      expect(NOMBRE_GRAFICO[t]).toBeTruthy();
+      expect(PREGUNTA_GRAFICO[t]).toBeTruthy();
+    }
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Telaraña                                                            */
+/* ------------------------------------------------------------------ */
+
+describe("promedioDeNivel", () => {
+  it("§9.1 — promedia por publicación y deja fuera a las que no traen el dato", () => {
+    const p = [punto({ me_gusta: 100 }), punto({ me_gusta: 300 }), punto({ me_gusta: null })];
+    // 400 / 2, no 400 / 3: la que no trae el dato no diluye el promedio (§9.4).
+    expect(promedioDeNivel(p, "me_gusta")).toBe(200);
+  });
+
+  it("sin ninguna que traiga el dato devuelve null, no cero", () => {
+    expect(promedioDeNivel([punto({ guardados: null })], "guardados")).toBeNull();
+    expect(promedioDeNivel([], "me_gusta")).toBeNull();
+  });
+
+  /*
+   * §9.6 — el engagement es una razón de sumas, y su denominador depende de la
+   * red. Un conjunto que mezcla YouTube con el resto no tiene UN engagement.
+   */
+  it("§9.6 — el engagement de un conjunto que mezcla redes es null", () => {
+    const ig = punto({ interacciones: 500, alcance: 10_000 });
+    const yt = punto({
+      red: "YouTube",
+      categoria: "Short",
+      tipo: null,
+      alcance: null,
+      visualizaciones: 10_000,
+      interacciones: 100,
+    });
+    expect(promedioDeNivel([ig, yt], "engagement")).toBeNull();
+    // Una sola red sí: 1.000 interacciones sobre 20.000 de alcance.
+    expect(
+      promedioDeNivel([ig, punto({ interacciones: 500, alcance: 10_000 })], "engagement"),
+    ).toBeCloseTo(0.05, 10);
+  });
+});
+
+describe("construirTelarana", () => {
+  /** Tres publicaciones de la misma serie, más una de otra. */
+  const serie = [
+    punto({ id: "a", hashtag: "#SPARTA", me_gusta: 300, comentarios: 30 }),
+    punto({ id: "b", hashtag: "#SPARTA", me_gusta: 100, comentarios: 10 }),
+    punto({ id: "c", hashtag: "#OTRA", me_gusta: 900, comentarios: 90 }),
+  ];
+  const RADIOS = { ejes: ["me_gusta", "comentarios", "visualizaciones"] as const };
+
+  /*
+   * El número que pidió el área: cuánto se despegó la publicación de su línea.
+   * 300 contra un promedio de 200 (300 y 100) es 150%.
+   */
+  it("el radio es la razón contra el promedio de su serie", () => {
+    const t = construirTelarana(serie, {
+      elegidas: [serie[0]],
+      nivel: "serie",
+      ...RADIOS,
+    });
+    const meGusta = t.poligonos[0].radios.find((r) => r.eje === "me_gusta")!;
+    expect(meGusta.valor).toBe(300);
+    expect(meGusta.base).toBe(200);
+    expect(meGusta.razon).toBeCloseTo(1.5, 10);
+  });
+
+  /*
+   * La misma publicación contra otra línea da otra figura, y las dos son
+   * ciertas. Es lo que convierte al nivel en parte del gráfico y no en un
+   * filtro más.
+   */
+  it("la misma publicación da otra figura contra la cuenta que contra la serie", () => {
+    const contraSerie = construirTelarana(serie, {
+      elegidas: [serie[0]],
+      nivel: "serie",
+      ...RADIOS,
+    });
+    const contraCuenta = construirTelarana(serie, {
+      elegidas: [serie[0]],
+      nivel: "cuenta",
+      ...RADIOS,
+    });
+
+    // La serie son a y b (promedio 200); la cuenta son las tres (promedio 433).
+    expect(contraSerie.poligonos[0].radios[0].base).toBe(200);
+    expect(contraCuenta.poligonos[0].radios[0].base).toBeCloseTo(1_300 / 3, 8);
+    expect(contraCuenta.poligonos[0].radios[0].razon).toBeLessThan(1);
+  });
+
+  it("nombra la línea contra la que comparó, y sobre cuántas se calculó", () => {
+    const t = construirTelarana(serie, { elegidas: [serie[0]], nivel: "serie", ...RADIOS });
+    expect(t.poligonos[0].referencia.etiqueta).toBe("#SPARTA");
+    expect(t.poligonos[0].referencia.n).toBe(2);
+
+    const global = construirTelarana(serie, {
+      elegidas: [serie[0]],
+      nivel: "global",
+      ...RADIOS,
+    });
+    expect(global.poligonos[0].referencia.n).toBe(3);
+  });
+
+  /*
+   * La línea NO puede depender de lo que esté filtrado en pantalla: si apagar
+   * un grupo la moviera, el mismo post daría 120% o 90% según lo prendido y el
+   * número dejaría de significar algo. Se calcula sobre todo el período.
+   */
+  it("la línea sale de todo el período, no de lo que esté visible", () => {
+    const t = construirTelarana(serie, { elegidas: [serie[0]], nivel: "global", ...RADIOS });
+    expect(t.poligonos[0].radios[0].base).toBeCloseTo(1_300 / 3, 8);
+  });
+
+  /*
+   * §9.5 — una fila que representa tres publicaciones tiene los números de las
+   * tres juntos: metida en el promedio lo dispararía.
+   */
+  it("§9.5 — las filas que representan varias publicaciones no entran en la línea", () => {
+    const conAgrupada = [...serie, punto({ hashtag: "#SPARTA", publicaciones: 3, me_gusta: 3_000 })];
+    const t = construirTelarana(conAgrupada, {
+      elegidas: [serie[0]],
+      nivel: "serie",
+      ...RADIOS,
+    });
+    expect(t.poligonos[0].radios[0].base).toBe(200);
+  });
+
+  /*
+   * Un radio sin dato no se dibuja en cero —diría "rindió cero"— ni en 100%
+   * —diría "le fue como al promedio"—. Se cae y se dice por qué.
+   */
+  it("§9.4 — un radio sin dato se cae y se explica, no se dibuja", () => {
+    const sinGuardados = [punto({ id: "x", guardados: null }), punto({ guardados: null })];
+    const t = construirTelarana(sinGuardados, {
+      elegidas: [sinGuardados[0]],
+      nivel: "global",
+      ejes: ["me_gusta", "guardados", "comentarios"],
+    });
+    expect(t.ejes).toEqual(["me_gusta", "comentarios"]);
+    expect(t.descartados.map((d) => d.eje)).toEqual(["guardados"]);
+    expect(t.descartados[0].motivo).toContain("no trae esta métrica");
+  });
+
+  it("también se cae el radio cuya línea no tiene el dato", () => {
+    // La publicación sí trae favoritos, pero es la única: su línea de serie...
+    // en realidad la línea la forma ella misma, así que sí hay base. El caso
+    // real es una base en cero, que haría una división sin sentido.
+    const p = [punto({ id: "z", nuevos_seguidores: 5 }), punto({ nuevos_seguidores: 0 })];
+    const base0 = [punto({ id: "z", nuevos_seguidores: 5 }), punto({ nuevos_seguidores: -5 })];
+    expect(
+      construirTelarana(p, {
+        elegidas: [p[0]],
+        nivel: "global",
+        ejes: ["me_gusta", "comentarios", "nuevos_seguidores"],
+      }).ejes,
+    ).toContain("nuevos_seguidores");
+
+    // Promedio 0: dividir por eso daría infinito.
+    const t = construirTelarana(base0, {
+      elegidas: [base0[0]],
+      nivel: "global",
+      ejes: ["me_gusta", "comentarios", "nuevos_seguidores"],
+    });
+    expect(t.ejes).not.toContain("nuevos_seguidores");
+  });
+
+  /*
+   * Los radios tienen que ser los MISMOS para todas las figuras: un polígono de
+   * cinco vértices y otro de seis, superpuestos, no se pueden comparar.
+   */
+  it("con varias publicaciones, un radio que le falta a una se cae para todas", () => {
+    const ig = punto({ id: "ig", guardados: 10 });
+    const yt = punto({
+      id: "yt",
+      red: "YouTube",
+      categoria: "Short",
+      tipo: null,
+      alcance: null,
+      guardados: null,
+    });
+    const t = construirTelarana([ig, yt], {
+      elegidas: [ig, yt],
+      nivel: "global",
+      ejes: ["me_gusta", "comentarios", "guardados", "alcance"],
+    });
+    expect(t.ejes).toEqual(["me_gusta", "comentarios"]);
+    expect(t.poligonos).toHaveLength(2);
+    // Las dos figuras tienen la misma cantidad de vértices.
+    expect(t.poligonos[0].radios).toHaveLength(t.poligonos[1].radios.length);
+  });
+
+  /*
+   * Una línea hecha con una sola publicación es la publicación misma: da 100%
+   * en todo por definición. Una telaraña pegada al anillo parece un resultado,
+   * así que hay que avisarlo.
+   */
+  it("avisa cuando la línea está hecha con una sola publicación", () => {
+    const sola = [punto({ id: "u", hashtag: "#UNICA" }), punto({ hashtag: "#OTRA" })];
+    const t = construirTelarana(sola, { elegidas: [sola[0]], nivel: "serie", ...RADIOS });
+    expect(t.lineasDeUna).toHaveLength(1);
+    // Y efectivamente da 100% en todos los radios.
+    expect(t.poligonos[0].radios.every((r) => Math.abs(r.razon - 1) < 1e-9)).toBe(true);
+  });
+
+  it("avisa cuando una publicación sin hashtag se compara contra su serie", () => {
+    const sinHashtag = punto({ id: "s", hashtag: null });
+    const t = construirTelarana([sinHashtag, punto()], {
+      elegidas: [sinHashtag],
+      nivel: "serie",
+      ...RADIOS,
+    });
+    expect(t.sinSerie).toHaveLength(1);
+    // Sin serie no hay línea, así que no queda ningún radio que dibujar.
+    expect(t.ejes).toEqual([]);
+  });
+
+  /*
+   * El anillo del 100% tiene que caber siempre: si la publicación rindió por
+   * debajo en todo, ese anillo es justamente lo que deja ver CUÁNTO por debajo.
+   */
+  /*
+   * Que la escala llegue justo hasta 1 no alcanza: el anillo del 100% quedaba
+   * pegado al borde del dibujo y se leía como el marco del gráfico en vez de
+   * como la referencia.
+   */
+  it("la escala pasa de largo el anillo de la línea, aunque todo rinda por debajo", () => {
+    const flojo = punto({ id: "f", me_gusta: 1, comentarios: 1, visualizaciones: 1 });
+    const t = construirTelarana([flojo, punto({ me_gusta: 1_000 })], {
+      elegidas: [flojo],
+      nivel: "global",
+      ...RADIOS,
+    });
+    expect(t.tope).toBeGreaterThan(1);
+    expect(t.poligonos[0].radios.every((r) => r.razon < 1)).toBe(true);
+  });
+
+  it("nunca dibuja más figuras que colores tiene", () => {
+    const muchas = Array.from({ length: 6 }, (_, i) => punto({ id: `m${i}` }));
+    const t = construirTelarana(muchas, {
+      elegidas: muchas,
+      nivel: "global",
+      ...RADIOS,
+    });
+    expect(t.poligonos).toHaveLength(MAXIMO_POLIGONOS);
+    expect(new Set(t.poligonos.map((p) => p.color)).size).toBe(MAXIMO_POLIGONOS);
+  });
+
+  it("sin publicaciones elegidas no dibuja nada y no se cae", () => {
+    const t = construirTelarana(serie, { elegidas: [], nivel: "serie", ...RADIOS });
+    expect(t.poligonos).toEqual([]);
+    expect(t.tope).toBeGreaterThanOrEqual(1);
+  });
+
+  /*
+   * §9.6 — una serie NO vive en una sola red: el mismo hashtag sale en
+   * Instagram, en TikTok y en YouTube, y YouTube calcula el engagement sobre
+   * visualizaciones porque no entrega alcance. Si la línea se promediara entre
+   * las tres, ese radio se caería casi siempre — justo el que más se mira.
+   */
+  it("§9.6 — la línea del engagement se acota a la red de la publicación", () => {
+    const ig1 = punto({ id: "ig1", hashtag: "#S", interacciones: 500, alcance: 10_000 });
+    const ig2 = punto({ id: "ig2", hashtag: "#S", interacciones: 200, alcance: 10_000 });
+    const yt = punto({
+      id: "yt",
+      hashtag: "#S",
+      red: "YouTube",
+      categoria: "Short",
+      tipo: null,
+      alcance: null,
+      visualizaciones: 10_000,
+      interacciones: 5_000,
+    });
+
+    const t = construirTelarana([ig1, ig2, yt], {
+      elegidas: [ig1],
+      nivel: "serie",
+      ejes: ["me_gusta", "comentarios", "engagement"],
+    });
+
+    // El radio sobrevive, en vez de caerse por mezclar denominadores.
+    expect(t.ejes).toContain("engagement");
+
+    // Y la línea son SOLO las dos de Instagram: 700 interacciones sobre 20.000
+    // de alcance. Si hubiera entrado YouTube, daría otra cosa.
+    const eng = t.poligonos[0].radios.find((r) => r.eje === "engagement")!;
+    expect(eng.base).toBeCloseTo(700 / 20_000, 10);
+    expect(eng.razon).toBeCloseTo(0.05 / 0.035, 8);
+
+    // Se avisa, porque el radio se lee como "contra su serie" a secas.
+    expect(t.engagementAcotado).toBe(true);
+    expect(t.poligonos[0].referencia.nEngagement).toBe(2);
+    // Los demás radios sí van contra la serie entera.
+    expect(t.poligonos[0].referencia.n).toBe(3);
+  });
+
+  it("si la serie es de una sola red, no hay nada que acotar ni que avisar", () => {
+    const t = construirTelarana(serie, {
+      elegidas: [serie[0]],
+      nivel: "serie",
+      ejes: ["me_gusta", "comentarios", "engagement"],
+    });
+    expect(t.engagementAcotado).toBe(false);
+  });
+});
+
+describe("la serie como corte", () => {
+  it("agrupa por hashtag", () => {
+    const g = gruposDe(
+      [
+        punto({ hashtag: "#SPARTA" }),
+        punto({ hashtag: "#SPARTA" }),
+        punto({ hashtag: "#FECHA21" }),
+      ],
+      "serie",
+    );
+    expect(g.map((x) => x.etiqueta)).toEqual(["#SPARTA", "#FECHA21"]);
+    expect(g[0].n).toBe(2);
+  });
+
+  /*
+   * "Sin clasificar" servía para reel/reactivo/editorial, pero una publicación
+   * sin hashtag no está sin clasificar: no pertenece a ninguna serie.
+   */
+  it("las que no tienen hashtag se llaman «sin hashtag», no «sin clasificar»", () => {
+    const g = gruposDe([punto({ hashtag: null }), punto({ hashtag: "#SPARTA" })], "serie");
+    expect(g[g.length - 1].etiqueta).toBe("Sin hashtag");
+    expect(etiquetaDeGrupo(SIN_CLASIFICAR, "serie")).toBe("Sin hashtag");
+    expect(etiquetaDeGrupo(SIN_CLASIFICAR, "tipo_post")).toBe("Sin clasificar");
+  });
+
+  it("los cuatro gráficos de conjunto saben con qué corte se armaron", () => {
+    for (const g of todosLosGraficos([punto()])) expect(g.agrupacion).toBe("tipo_post");
   });
 });

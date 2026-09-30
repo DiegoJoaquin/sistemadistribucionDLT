@@ -41,11 +41,18 @@ import { denominadorEngagementRed, type Red } from "./redes";
 /* Qué gráfico                                                         */
 /* ------------------------------------------------------------------ */
 
-export const TIPOS_GRAFICO = ["dispersion", "caja", "distribucion", "ranking"] as const;
+export const TIPOS_GRAFICO = [
+  "dispersion",
+  "telarana",
+  "caja",
+  "distribucion",
+  "ranking",
+] as const;
 export type TipoGrafico = (typeof TIPOS_GRAFICO)[number];
 
 export const NOMBRE_GRAFICO: Record<TipoGrafico, string> = {
   dispersion: "Dispersión",
+  telarana: "Telaraña",
   caja: "Comparar grupos",
   distribucion: "Distribución",
   ranking: "Ranking",
@@ -54,13 +61,20 @@ export const NOMBRE_GRAFICO: Record<TipoGrafico, string> = {
 /** La pregunta que contesta cada uno, para poder elegir sin adivinar. */
 export const PREGUNTA_GRAFICO: Record<TipoGrafico, string> = {
   dispersion: "¿Tiene que ver una métrica con otra?",
+  telarana: "¿Cómo le fue a esta publicación contra su línea?",
   caja: "¿Qué tipo de post rinde mejor?",
   distribucion: "¿Cuánto rinde una publicación normal?",
   ranking: "¿Cuáles fueron las mejores?",
 };
 
-/** Cuántas métricas necesita cada gráfico: la dispersión dos, el resto una. */
-export function ejesQueUsa(tipo: TipoGrafico): 1 | 2 {
+/**
+ * Cuántas métricas elige el usuario en la fila de controles.
+ *
+ * La dispersión pide dos —una por eje—, el resto una, y la telaraña ninguna:
+ * usa varios radios a la vez y los elige aparte.
+ */
+export function ejesQueUsa(tipo: TipoGrafico): 0 | 1 | 2 {
+  if (tipo === "telarana") return 0;
   return tipo === "dispersion" ? 2 : 1;
 }
 
@@ -74,6 +88,14 @@ export function ejesQueUsa(tipo: TipoGrafico): 1 | 2 {
  */
 export function usaColorPorGrupo(tipo: TipoGrafico): boolean {
   return tipo === "dispersion" || tipo === "ranking";
+}
+
+/**
+ * Si el gráfico compara publicaciones elegidas a mano en vez de todo el
+ * conjunto. Solo la telaraña: las demás dibujan lo que haya.
+ */
+export function eligePublicaciones(tipo: TipoGrafico): boolean {
+  return tipo === "telarana";
 }
 
 export function esTipoGrafico(v: unknown): v is TipoGrafico {
@@ -221,11 +243,12 @@ export function valorEnEje(p: PublicacionPunto, eje: Eje): number | null {
 /* La tercera variable: cómo se agrupan las publicaciones              */
 /* ------------------------------------------------------------------ */
 
-export const AGRUPACIONES = ["tipo_post", "formato", "tipo", "cuenta", "red"] as const;
+export const AGRUPACIONES = ["tipo_post", "serie", "formato", "tipo", "cuenta", "red"] as const;
 export type Agrupacion = (typeof AGRUPACIONES)[number];
 
 export const NOMBRE_AGRUPACION: Record<Agrupacion, string> = {
   tipo_post: "Tipo de post (reel / reactivo / editorial)",
+  serie: "Serie (hashtag)",
   formato: "Formato",
   tipo: "Reactivo o Normal",
   cuenta: "Cuenta",
@@ -279,6 +302,8 @@ export function grupoDe(p: PublicacionPunto, agrupacion: Agrupacion): string | n
   switch (agrupacion) {
     case "tipo_post":
       return tipoDePost(p);
+    case "serie":
+      return p.hashtag;
     case "formato":
       return p.categoria;
     case "tipo":
@@ -293,9 +318,25 @@ export function grupoDe(p: PublicacionPunto, agrupacion: Agrupacion): string | n
 /** La clave de "sin clasificar": no es un grupo más, va siempre en gris. */
 export const SIN_CLASIFICAR = "\u0000sin-clasificar";
 
+/**
+ * Cómo se llama el cajón de las que no entran en ningún grupo, en cada corte.
+ *
+ * "Sin clasificar" servía cuando el único corte era reel/reactivo/editorial,
+ * pero una publicación sin hashtag no está sin clasificar: no pertenece a
+ * ninguna serie, que es otra cosa y se lee distinto en la leyenda.
+ */
+const SIN_DATO: Record<Agrupacion, string> = {
+  tipo_post: "Sin clasificar",
+  serie: "Sin hashtag",
+  formato: "Sin formato",
+  tipo: "Sin tipo",
+  cuenta: "Sin cuenta",
+  red: "Sin red",
+};
+
 /** Cómo se escribe la clave de un grupo. */
-export function etiquetaDeGrupo(clave: string): string {
-  return clave === SIN_CLASIFICAR ? "Sin clasificar" : clave;
+export function etiquetaDeGrupo(clave: string, agrupacion: Agrupacion): string {
+  return clave === SIN_CLASIFICAR ? SIN_DATO[agrupacion] : clave;
 }
 
 /**
@@ -341,7 +382,7 @@ export function gruposDe(
     .sort(([a, na], [b, nb]) => nb - na || a.localeCompare(b, "es"))
     .map(([clave, n], i) => ({
       clave,
-      etiqueta: clave,
+      etiqueta: etiquetaDeGrupo(clave, agrupacion),
       n,
       color: i < MAXIMO_COLORES ? SERIES[i] : null,
     }));
@@ -351,7 +392,7 @@ export function gruposDe(
   if (sin) {
     grupos.push({
       clave: SIN_CLASIFICAR,
-      etiqueta: etiquetaDeGrupo(SIN_CLASIFICAR),
+      etiqueta: etiquetaDeGrupo(SIN_CLASIFICAR, agrupacion),
       n: sin,
       color: null,
     });
@@ -550,6 +591,7 @@ export interface Excluidas {
 
 /** Lo que comparten los cuatro gráficos, calculado una sola vez. */
 export interface Base {
+  agrupacion: Agrupacion;
   puntos: PuntoDibujado[];
   grupos: GrupoRendimiento[];
   excluidas: Excluidas;
@@ -646,6 +688,7 @@ export function baseDe(
   const denominadores = new Set(visibles.map((d) => denominadorEngagementRed(d.punto.red)));
 
   return {
+    agrupacion,
     puntos: visibles,
     grupos,
     excluidas,
@@ -982,6 +1025,362 @@ export function construirRanking(
       false,
     ),
     mediana: mediana(base.puntos.map((d) => d.x)),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Telaraña: una publicación contra su línea                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Contra qué se compara una publicación.
+ *
+ * Son las tres líneas que pidió el área, de la más cercana a la más lejana:
+ * cómo le fue respecto a las otras publicaciones de SU serie, respecto a las de
+ * SU cuenta, y respecto a todo lo publicado en el período. Es la misma idea que
+ * el catastro semanal —cada hashtag contra su línea base y contra el total de
+ * la cuenta— bajada al nivel de una publicación suelta.
+ */
+export const NIVELES = ["serie", "cuenta", "global"] as const;
+export type Nivel = (typeof NIVELES)[number];
+
+export const NOMBRE_NIVEL: Record<Nivel, string> = {
+  serie: "Su serie (hashtag)",
+  cuenta: "Su cuenta",
+  global: "Todo el período",
+};
+
+export const EXPLICACION_NIVEL: Record<Nivel, string> = {
+  serie: "Contra el promedio de las demás publicaciones con el mismo hashtag.",
+  cuenta: "Contra el promedio de todo lo que publicó esa misma cuenta.",
+  global: "Contra el promedio de todas las cuentas juntas en el período.",
+};
+
+export function esNivel(v: unknown): v is Nivel {
+  return typeof v === "string" && (NIVELES as readonly string[]).includes(v);
+}
+
+/**
+ * Las métricas que se ofrecen como radios.
+ *
+ * No están todas: `duracion_s` no es un resultado sino una característica de la
+ * publicación —un reel más largo no rindió más— y mezclarla con las demás haría
+ * que la figura creciera por algo que no es rendimiento.
+ */
+export const EJES_TELARANA: readonly Eje[] = [
+  "visualizaciones",
+  "alcance",
+  "me_gusta",
+  "comentarios",
+  "compartidos",
+  "guardados",
+  "favoritos",
+  "nuevos_seguidores",
+  "engagement",
+];
+
+/** Los radios que trae una telaraña recién abierta. */
+export const EJES_TELARANA_POR_DEFECTO: readonly Eje[] = [
+  "visualizaciones",
+  "alcance",
+  "me_gusta",
+  "comentarios",
+  "compartidos",
+  "engagement",
+];
+
+/** Menos de tres radios no es una figura, es una línea. */
+export const MINIMO_RADIOS = 3;
+
+/** Cuántas publicaciones se pueden superponer sin que la figura se ensucie. */
+export const MAXIMO_POLIGONOS = 3;
+
+/**
+ * El promedio de una métrica en un conjunto de publicaciones.
+ *
+ * §9.1 — promedio POR PUBLICACIÓN, igual que en todo el resto de la plataforma:
+ * las que no traen la métrica quedan fuera del numerador Y del denominador, así
+ * que no diluyen el promedio inventando ceros (§9.4).
+ *
+ * El engagement va por otro camino porque es una razón de sumas y no un
+ * promedio de razones, y su denominador depende de la red (§9.6): si el
+ * conjunto mezcla YouTube con el resto, no hay un engagement que signifique lo
+ * mismo para todos y devuelve null en vez de un número que parece comparable.
+ */
+export function promedioDeNivel(
+  puntos: readonly PublicacionPunto[],
+  eje: Eje,
+): number | null {
+  if (eje === "engagement") {
+    const denominadores = new Set(puntos.map((p) => denominadorEngagementRed(p.red)));
+    if (denominadores.size > 1) return null;
+
+    let interacciones = 0;
+    let denominador = 0;
+    let hubo = false;
+    for (const p of puntos) {
+      const d = p[denominadorEngagementRed(p.red)];
+      if (p.interacciones === null || d === null) continue;
+      interacciones += p.interacciones;
+      denominador += d;
+      hubo = true;
+    }
+    return !hubo || denominador === 0 ? null : interacciones / denominador;
+  }
+
+  let suma = 0;
+  let cuantas = 0;
+  for (const p of puntos) {
+    const v = p[eje];
+    if (v === null) continue;
+    suma += v;
+    cuantas += 1;
+  }
+  return cuantas === 0 ? null : suma / cuantas;
+}
+
+export interface Referencia {
+  nivel: Nivel;
+  /** "#SPARTA", "Instagram DLT", "Todo el período". */
+  etiqueta: string;
+  /** Sobre cuántas publicaciones se calculó. */
+  n: number;
+  valores: Partial<Record<Eje, number | null>>;
+  /**
+   * §9.6 — la línea del engagement se calculó solo con las publicaciones de la
+   * misma red, porque el resto lo mide con otro denominador.
+   */
+  engagementAcotado: boolean;
+  /** Sobre cuántas publicaciones salió esa línea acotada. */
+  nEngagement: number;
+}
+
+/**
+ * Las publicaciones que forman la línea de comparación de una publicación.
+ *
+ * Se calculan sobre TODO el período y no sobre lo que quedó visible en la
+ * leyenda: si apagar un grupo moviera la línea, el mismo post daría 120% o 90%
+ * según lo que estuviera prendido, y ese número dejaría de significar algo.
+ */
+function puntosDelNivel(
+  todos: readonly PublicacionPunto[],
+  p: PublicacionPunto,
+  nivel: Nivel,
+): readonly PublicacionPunto[] {
+  // §9.5 — una fila que representa varias publicaciones no promedia igual.
+  const base = todos.filter((x) => x.publicaciones === 1);
+  switch (nivel) {
+    case "serie":
+      return p.hashtag === null ? [] : base.filter((x) => x.hashtag === p.hashtag);
+    case "cuenta":
+      return base.filter((x) => x.cuentaId === p.cuentaId);
+    case "global":
+      return base;
+  }
+}
+
+function referenciaDe(
+  todos: readonly PublicacionPunto[],
+  p: PublicacionPunto,
+  nivel: Nivel,
+  ejes: readonly Eje[],
+): Referencia {
+  const suyas = puntosDelNivel(todos, p, nivel);
+
+  /*
+   * §9.6 — la línea del engagement se calcula SOLO con las publicaciones que lo
+   * miden con el mismo denominador que ésta.
+   *
+   * Una serie no vive en una sola red: el mismo hashtag sale en Instagram, en
+   * TikTok y en YouTube, y YouTube calcula el engagement sobre visualizaciones
+   * porque no entrega alcance. Promediar las tres daría un número sin
+   * significado, así que la alternativa era dejar el radio de engagement fuera
+   * casi siempre — justo el radio que más se mira. Acotarlo a su red contesta
+   * la pregunta que de verdad se hace («¿le fue mejor que a los otros reels de
+   * esta serie en Instagram?») y se rotula, para que no parezca que compara
+   * contra toda la serie.
+   */
+  const mismoDenominador = suyas.filter(
+    (x) => denominadorEngagementRed(x.red) === denominadorEngagementRed(p.red),
+  );
+
+  const valores: Partial<Record<Eje, number | null>> = {};
+  for (const eje of ejes) {
+    valores[eje] = promedioDeNivel(eje === "engagement" ? mismoDenominador : suyas, eje);
+  }
+
+  return {
+    nivel,
+    etiqueta:
+      nivel === "serie"
+        ? (p.hashtag ?? "sin hashtag")
+        : nivel === "cuenta"
+          ? p.cuenta
+          : NOMBRE_NIVEL.global,
+    n: suyas.length,
+    valores,
+    engagementAcotado:
+      ejes.includes("engagement") && mismoDenominador.length < suyas.length,
+    nEngagement: mismoDenominador.length,
+  };
+}
+
+export interface RadioTelarana {
+  eje: Eje;
+  /** Lo que tuvo la publicación. */
+  valor: number;
+  /** El promedio de su línea de comparación. */
+  base: number;
+  /** valor / base. 1 = exactamente en la línea. */
+  razon: number;
+}
+
+export interface PoligonoTelarana {
+  punto: PublicacionPunto;
+  color: string;
+  referencia: Referencia;
+  /** Alineados con `Telarana.ejes`. */
+  radios: RadioTelarana[];
+}
+
+export interface Telarana {
+  nivel: Nivel;
+  /** Los radios que sí se pudieron dibujar, en orden. */
+  ejes: Eje[];
+  poligonos: PoligonoTelarana[];
+  /** El tope de la escala radial. El anillo de la línea está en 1. */
+  tope: number;
+  marcas: number[];
+  /** Radios que se cayeron, con el motivo para poder decirlo. */
+  descartados: { eje: Eje; motivo: string }[];
+  /**
+   * Publicaciones cuya línea se calculó sobre ella misma y nada más: la
+   * comparación da 100% por definición y no dice nada.
+   */
+  lineasDeUna: string[];
+  /** Publicaciones sin hashtag, que no tienen serie contra la cual compararse. */
+  sinSerie: string[];
+  /**
+   * §9.6 — la línea del engagement tuvo que acotarse a la red de la publicación
+   * porque su serie o su período abarca redes que lo miden distinto.
+   */
+  engagementAcotado: boolean;
+}
+
+export interface OpcionesTelarana {
+  /** Las publicaciones elegidas, en orden. Se dibujan hasta `MAXIMO_POLIGONOS`. */
+  elegidas: readonly PublicacionPunto[];
+  nivel: Nivel;
+  ejes?: readonly Eje[];
+}
+
+/**
+ * La telaraña: cada radio es una métrica, y el valor es cuánto se despegó la
+ * publicación de su línea.
+ *
+ * El truco que hace posible el gráfico es que los radios NO llevan el número
+ * crudo. Poner visualizaciones (decenas de miles) y engagement (0,05) en la
+ * misma figura no se puede: una métrica taparía a la otra. Lo que se dibuja es
+ * la RAZÓN contra la línea elegida, que no tiene unidades — así los seis radios
+ * hablan el mismo idioma y el anillo del 100% es "le fue como al promedio".
+ *
+ * Eso convierte al nivel de comparación en parte del gráfico y no en un filtro
+ * más: la misma publicación dibuja una figura distinta contra su serie que
+ * contra toda la cuenta, y las dos cosas son ciertas.
+ *
+ * Un radio se cae si la publicación no trae la métrica o si su línea no la
+ * trae: dibujarlo en cero diría "rindió cero" y dibujarlo en 100% diría "le fue
+ * igual al promedio", y las dos cosas serían inventadas (§9.4). Se dicen.
+ */
+export function construirTelarana(
+  puntos: readonly PublicacionPunto[],
+  opciones: OpcionesTelarana,
+): Telarana {
+  const { nivel } = opciones;
+  const pedidos = (opciones.ejes ?? EJES_TELARANA_POR_DEFECTO).filter((e) =>
+    EJES_TELARANA.includes(e),
+  );
+  const elegidas = opciones.elegidas.slice(0, MAXIMO_POLIGONOS);
+
+  const referencias = elegidas.map((p) => referenciaDe(puntos, p, nivel, pedidos));
+
+  /*
+   * Los radios tienen que ser los MISMOS para todas las figuras: un polígono
+   * con cinco vértices y otro con seis, superpuestos, no se pueden comparar. Así
+   * que se queda solo lo que todas las publicaciones elegidas Y todas sus
+   * líneas pueden medir.
+   */
+  const ejes: Eje[] = [];
+  const descartados: { eje: Eje; motivo: string }[] = [];
+
+  for (const eje of pedidos) {
+    const sinValor = elegidas.filter((p) => valorEnEje(p, eje) === null);
+    if (sinValor.length > 0) {
+      descartados.push({
+        eje,
+        motivo:
+          elegidas.length === 1
+            ? "la publicación no trae esta métrica"
+            : `${sinValor.length} de las publicaciones elegidas no traen esta métrica`,
+      });
+      continue;
+    }
+
+    const sinBase = referencias.filter((r) => {
+      const b = r.valores[eje];
+      return b === null || b === undefined || b === 0;
+    });
+    if (sinBase.length > 0) {
+      descartados.push({
+        eje,
+        motivo:
+          eje === "engagement"
+            ? "ninguna otra publicación de su red mide el engagement en esa línea (§9.6)"
+            : "la línea de comparación no tiene este dato",
+      });
+      continue;
+    }
+
+    ejes.push(eje);
+  }
+
+  const poligonos: PoligonoTelarana[] = elegidas.map((p, i) => ({
+    punto: p,
+    color: SERIES[i],
+    referencia: referencias[i],
+    radios: ejes.map((eje) => {
+      const valor = valorEnEje(p, eje)!;
+      const base = referencias[i].valores[eje]!;
+      return { eje, valor, base, razon: valor / base };
+    }),
+  }));
+
+  /*
+   * La escala radial siempre pasa DE LARGO el anillo de la línea.
+   *
+   * Que llegue hasta 1 no alcanza: cuando la publicación rindió por debajo en
+   * todo, el anillo del 100% quedaba justo en el borde del dibujo y se leía
+   * como el marco del gráfico en vez de como la referencia. Con un poco de aire
+   * por fuera se ve que es un anillo más, y que la figura está adentro.
+   */
+  const razones = poligonos.flatMap((p) => p.radios.map((r) => r.razon));
+  const escala = escalaDe([Math.max(1.05, ...razones)], false);
+
+  return {
+    nivel,
+    ejes,
+    poligonos,
+    tope: escala.max,
+    marcas: escala.marcas.filter((m) => m > 0),
+    descartados,
+    lineasDeUna: poligonos
+      .filter((p) => p.referencia.n <= 1)
+      .map((p) => p.punto.titulo ?? "Sin título"),
+    sinSerie:
+      nivel === "serie"
+        ? elegidas.filter((p) => p.hashtag === null).map((p) => p.titulo ?? "Sin título")
+        : [],
+    engagementAcotado: referencias.some((r) => r.engagementAcotado),
   };
 }
 
