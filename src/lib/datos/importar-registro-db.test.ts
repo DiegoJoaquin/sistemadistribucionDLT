@@ -59,6 +59,12 @@ const COLUMNAS = [
   "alcance",
   "visualizaciones",
   "interacciones",
+  "me_gusta",
+  "comentarios",
+  "compartidos",
+  "guardados",
+  "favoritos",
+  "duracion_s",
   "nuevos_seguidores",
   "titulo_contenido",
   "enlace",
@@ -412,5 +418,126 @@ describe("importar publicaciones al registro", () => {
       { hashtag: "FECHA21XDLT", n: "2" },
       { hashtag: null, n: "1" },
     ]);
+  });
+
+  /*
+   * El desglose de interacciones. Lo que las exportaciones ya traían y el
+   * registro descartaba: sin estas columnas no se puede graficar un like contra
+   * una visualización, que es justo lo que pidió el otro área.
+   */
+  it("guarda el desglose de interacciones, no solo el total", async () => {
+    const cuenta = await crearCuenta("Desglose", "@desglose", "Instagram");
+    const fila = aFilaRegistro(
+      pub({
+        id_externo: "desglose-1",
+        me_gusta: 300,
+        comentarios: 20,
+        compartidos: 10,
+        guardados: 5,
+        favoritos: null,
+        duracion_s: 45,
+        interacciones: 335,
+      }),
+      cuenta,
+    );
+    expect(fila).not.toBeNull();
+    await insertar(fila!);
+
+    const r = await db.query<{
+      me_gusta: number | null;
+      comentarios: number | null;
+      compartidos: number | null;
+      guardados: number | null;
+      favoritos: number | null;
+      duracion_s: number | null;
+      interacciones: number | null;
+    }>(
+      `select me_gusta, comentarios, compartidos, guardados, favoritos,
+              duracion_s, interacciones
+         from public.registros where id_externo = 'desglose-1'`,
+    );
+
+    expect(r.rows[0]).toEqual({
+      me_gusta: 300,
+      comentarios: 20,
+      compartidos: 10,
+      guardados: 5,
+      // Instagram no tiene favoritos: null, no cero.
+      favoritos: null,
+      duracion_s: 45,
+      /*
+       * El total es el que declara la fuente y NO la suma de las partes
+       * (300+20+10+5 = 335 acá por casualidad, pero cada red compone el suyo
+       * distinto). Recalcularlo cambiaría el engagement de todo lo ya cargado.
+       */
+      interacciones: 335,
+    });
+  });
+
+  it("§9.4 — el desglose acepta cero pero rechaza un negativo", async () => {
+    const cuenta = await crearCuenta("Ceros", "@ceros", "Instagram");
+    const cero = aFilaRegistro(
+      pub({ id_externo: "cero", me_gusta: 0, comentarios: 0 }),
+      cuenta,
+    );
+    // Cero me gusta es un dato: una publicación puede no gustarle a nadie.
+    await insertar(cero!);
+
+    const negativo = aFilaRegistro(pub({ id_externo: "neg", me_gusta: -5 }), cuenta);
+    await expect(insertar(negativo!)).rejects.toThrow(/me_gusta/);
+  });
+
+  /*
+   * Reimportar completa lo que falta sin pisar lo que ya estaba. Es la misma
+   * regla de §5.1, y acá importa el doble: las filas cargadas antes de que
+   * existieran estas columnas tienen el total pero no las partes, y la única
+   * forma de llenarlas es volver a subir la exportación.
+   */
+  it("reimportar completa el desglose que faltaba y no pisa el resto", async () => {
+    const cuenta = await crearCuenta("Relleno", "@relleno", "Instagram");
+
+    // Como quedó cargada antes: con total, sin partes.
+    const vieja = aFilaRegistro(
+      pub({
+        id_externo: "relleno-1",
+        me_gusta: null,
+        comentarios: null,
+        compartidos: null,
+        guardados: null,
+        duracion_s: null,
+        interacciones: 335,
+        nuevos_seguidores: 8,
+      }),
+      cuenta,
+    );
+    await insertar(vieja!);
+
+    const { rows } = await db.query<{ id: string }>(
+      `select id from public.registros where id_externo = 'relleno-1'`,
+    );
+
+    // La misma exportación de vuelta, ahora sí con el desglose...
+    const nueva = aFilaRegistro(
+      pub({ id_externo: "relleno-1", me_gusta: 300, comentarios: 20, duracion_s: 45 }),
+      cuenta,
+    );
+    // ...pero sin nuevos seguidores, que esta fuente no entrega.
+    nueva!.nuevos_seguidores = null;
+
+    await actualizar(rows[0].id, fusionarConExistente(vieja!, nueva!));
+
+    const r = await db.query<{
+      me_gusta: number | null;
+      duracion_s: number | null;
+      nuevos_seguidores: number | null;
+    }>(
+      `select me_gusta, duracion_s, nuevos_seguidores from public.registros
+         where id_externo = 'relleno-1'`,
+    );
+
+    expect(r.rows[0].me_gusta).toBe(300);
+    expect(r.rows[0].duracion_s).toBe(45);
+    // Lo que ya estaba no se borró con el nulo de la segunda fuente.
+    expect(r.rows[0].nuevos_seguidores).toBe(8);
   });
 });

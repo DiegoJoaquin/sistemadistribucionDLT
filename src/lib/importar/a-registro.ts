@@ -35,6 +35,20 @@ export interface FilaRegistroImportada {
   alcance: number | null;
   visualizaciones: number | null;
   interacciones: number | null;
+  /**
+   * El desglose de las interacciones, tal como lo trae el archivo.
+   *
+   * No se calcula ni se completa: si la fuente no entrega comentarios, queda
+   * null y no cero (§9.4). Y `interacciones` sigue siendo lo que declara la
+   * fuente, no la suma de estas partes — cada red compone su total distinto y
+   * recalcularlo cambiaría el engagement de todo lo ya cargado.
+   */
+  me_gusta: number | null;
+  comentarios: number | null;
+  compartidos: number | null;
+  guardados: number | null;
+  favoritos: number | null;
+  duracion_s: number | null;
   nuevos_seguidores: number | null;
   titulo_contenido: string | null;
   enlace: string | null;
@@ -171,6 +185,12 @@ export function aFilaRegistro(
     alcance: tieneAlcanceRed(cuenta.red) ? p.alcance : null,
     visualizaciones: p.visualizaciones,
     interacciones: p.interacciones,
+    me_gusta: p.me_gusta,
+    comentarios: p.comentarios,
+    compartidos: p.compartidos,
+    guardados: p.guardados,
+    favoritos: p.favoritos,
+    duracion_s: p.duracion_s,
     nuevos_seguidores: p.nuevos_seguidores,
     titulo_contenido: tituloDeCaption(p.caption),
     enlace: enlaceValido(p.enlace),
@@ -269,6 +289,12 @@ export function fusionarConExistente(
     alcance: mantener(nueva.alcance, existente.alcance),
     visualizaciones: mantener(nueva.visualizaciones, existente.visualizaciones),
     interacciones: mantener(nueva.interacciones, existente.interacciones),
+    me_gusta: mantener(nueva.me_gusta, existente.me_gusta),
+    comentarios: mantener(nueva.comentarios, existente.comentarios),
+    compartidos: mantener(nueva.compartidos, existente.compartidos),
+    guardados: mantener(nueva.guardados, existente.guardados),
+    favoritos: mantener(nueva.favoritos, existente.favoritos),
+    duracion_s: mantener(nueva.duracion_s, existente.duracion_s),
     nuevos_seguidores: mantener(nueva.nuevos_seguidores, existente.nuevos_seguidores),
     titulo_contenido: mantener(nueva.titulo_contenido, existente.titulo_contenido),
     enlace: mantener(nueva.enlace, existente.enlace),

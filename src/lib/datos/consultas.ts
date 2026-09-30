@@ -57,6 +57,7 @@ import type {
 const SELECT_REGISTRO = `
   id, fecha, cuenta_id, plataforma, categoria, tipo, publicaciones,
   alcance, visualizaciones, interacciones, nuevos_seguidores,
+  me_gusta, comentarios, compartidos, guardados, favoritos, duracion_s,
   visitas_perfil, vistas_seguidores, vistas_no_seguidores,
   titulo_contenido, enlace, hashtag, publicado_en, id_externo, fuente,
   created_by, created_at, updated_at,

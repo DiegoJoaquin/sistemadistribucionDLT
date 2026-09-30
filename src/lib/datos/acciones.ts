@@ -641,7 +641,7 @@ export async function importarPublicaciones(
     const { data, error } = await supabase
       .from("registros")
       .select(
-        "id, id_externo, categoria, tipo, hashtag, alcance, visualizaciones, interacciones, nuevos_seguidores, titulo_contenido, enlace",
+        "id, id_externo, categoria, tipo, hashtag, alcance, visualizaciones, interacciones, me_gusta, comentarios, compartidos, guardados, favoritos, duracion_s, nuevos_seguidores, titulo_contenido, enlace",
       )
       .eq("cuenta_id", cuenta.id)
       .in("id_externo", ids.slice(i, i + 200));

@@ -47,6 +47,20 @@ export interface RegistroRow {
   alcance: number | null;
   visualizaciones: number | null;
   interacciones: number | null;
+  /**
+   * El desglose de `interacciones`. NO se suman entre sí para obtener el total:
+   * cada red compone el suyo distinto, y una fila puede tener el total sin
+   * tener las partes (una exportación vieja) o al revés.
+   */
+  me_gusta: number | null;
+  comentarios: number | null;
+  /** Compartidos / reposts. */
+  compartidos: number | null;
+  guardados: number | null;
+  /** Solo TikTok tiene el concepto; en el resto es null, no cero. */
+  favoritos: number | null;
+  /** Duración del video en segundos. null en lo que no es video. */
+  duracion_s: number | null;
   nuevos_seguidores: number | null;
   visitas_perfil: number | null;
   vistas_seguidores: number | null;
