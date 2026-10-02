@@ -22,16 +22,23 @@
 -- duplicar nada ni pisar lo que ya estaba.
 -- ===========================================================================
 
+/*
+ * `if not exists` en cada columna: estas migraciones se aplican a mano, pegadas
+ * en el editor de Supabase, y no hay nada que lleve la cuenta de cuáles ya
+ * corrieron. Sin esto, volver a pegarla falla entera con "column already
+ * exists" en la primera columna —aunque falten las otras cinco— y no queda
+ * claro si el problema es que ya estaba hecho o que quedó a medias.
+ */
 alter table public.registros
   -- §9.4: null = no se midió. Ninguna es not null y ninguna tiene default 0.
-  add column me_gusta    bigint check (me_gusta    >= 0),
-  add column comentarios bigint check (comentarios >= 0),
-  add column compartidos bigint check (compartidos >= 0),
-  add column guardados   bigint check (guardados   >= 0),
-  add column favoritos   bigint check (favoritos   >= 0),
+  add column if not exists me_gusta    bigint check (me_gusta    >= 0),
+  add column if not exists comentarios bigint check (comentarios >= 0),
+  add column if not exists compartidos bigint check (compartidos >= 0),
+  add column if not exists guardados   bigint check (guardados   >= 0),
+  add column if not exists favoritos   bigint check (favoritos   >= 0),
   -- Duración del video en segundos. Permite preguntar si los reels largos
   -- rinden distinto, que es una de las preguntas que se hacen a mano hoy.
-  add column duracion_s  integer check (duracion_s >= 0);
+  add column if not exists duracion_s  integer check (duracion_s >= 0);
 
 comment on column public.registros.me_gusta is
   'Likes de la publicación. null = la fuente no lo entregó (§9.4). El total '
