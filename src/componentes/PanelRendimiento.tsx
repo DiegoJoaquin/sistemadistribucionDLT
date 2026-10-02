@@ -6,10 +6,13 @@ import { Dispersion } from "@/componentes/graficos/Dispersion";
 import { Histograma } from "@/componentes/graficos/Histograma";
 import { RankingPosts } from "@/componentes/graficos/RankingPosts";
 import { TablaTelarana, Telarana } from "@/componentes/graficos/Telarana";
+import { SelectorPublicaciones } from "@/componentes/SelectorPublicaciones";
 import { Nota } from "@/componentes/ui";
 import {
   AGRUPACIONES,
   type Agrupacion,
+  alternarElegida,
+  candidatas,
   construirCajas,
   construirDispersion,
   construirDistribucion,
@@ -38,19 +41,9 @@ import {
   type TipoGrafico,
   TIPOS_GRAFICO,
   usaColorPorGrupo,
-  valorEnEje,
 } from "@/lib/dominio/rendimiento";
 import { fechaCorta, numero } from "@/lib/dominio/formato";
 import { APAGADO } from "@/lib/dominio/paleta";
-
-/**
- * Cuántas publicaciones se ofrecen en los selectores de la telaraña.
- *
- * Un `<select>` con tres mil opciones no se puede recorrer. Van las mejores
- * según la métrica elegida, que son las que alguien quiere comparar; para
- * llegar a otra se acorta el período o se cambia la métrica.
- */
-const MAXIMO_ELEGIBLES = 300;
 
 /**
  * La herramienta de rendimiento por publicación.
@@ -86,7 +79,7 @@ export function PanelRendimiento({
   // Solo de la telaraña.
   const [nivel, setNivel] = useState<Nivel>("serie");
   const [radios, setRadios] = useState<Eje[]>([...EJES_TELARANA_POR_DEFECTO]);
-  const [elegidasIds, setElegidasIds] = useState<(string | null)[]>([null, null, null]);
+  const [elegidasIds, setElegidasIds] = useState<string[]>([]);
 
   const esTelarana = grafico === "telarana";
   const dosEjes = grafico === "dispersion";
@@ -130,20 +123,6 @@ export function PanelRendimiento({
     }
   }, [puntos, grafico, ejeX, ejeY, agrupacion, logX, logY, ocultos]);
 
-  /** Lo que se puede elegir en la telaraña, de mejor a peor en la métrica. */
-  const elegibles = useMemo(
-    () =>
-      puntos
-        // §9.5 — una fila que representa varias publicaciones no es una.
-        .filter((p) => p.publicaciones === 1)
-        .map((p) => ({ p, v: valorEnEje(p, ejeY) }))
-        .filter((x): x is { p: PublicacionPunto; v: number } => x.v !== null)
-        .sort((a, b) => b.v - a.v)
-        .slice(0, MAXIMO_ELEGIBLES)
-        .map((x) => x.p),
-    [puntos, ejeY],
-  );
-
   /*
    * Al abrir la telaraña por primera vez viene elegida la mejor publicación de
    * la métrica actual. Abrirla vacía obligaría a un paso más antes de ver nada,
@@ -151,12 +130,13 @@ export function PanelRendimiento({
    */
   const elegidas = useMemo(() => {
     const porId = new Map(puntos.map((p) => [p.id, p]));
-    const elegidas = elegidasIds.flatMap((id) => {
-      const p = id === null ? undefined : porId.get(id);
+    const puestas = elegidasIds.flatMap((id) => {
+      const p = porId.get(id);
       return p ? [p] : [];
     });
-    return elegidas.length > 0 ? elegidas : elegibles.slice(0, 1);
-  }, [puntos, elegidasIds, elegibles]);
+    if (puestas.length > 0) return puestas;
+    return candidatas(puntos, { metrica: ejeY }).slice(0, 1);
+  }, [puntos, elegidasIds, ejeY]);
 
   const telarana = useMemo(
     () => construirTelarana(puntos, { elegidas, nivel, ejes: radios }),
@@ -188,12 +168,13 @@ export function PanelRendimiento({
           EJES_TELARANA.filter((e) => previos.includes(e) || e === eje),
     );
 
-  const elegir = (i: number, id: string) =>
-    setElegidasIds((previas) => {
-      const nuevas = [...previas];
-      nuevas[i] = id === "" ? null : id;
-      return nuevas;
-    });
+  /*
+   * Agregar y quitar sobre la misma lista, y conservando el orden: el color de
+   * cada figura sale de su puesto, así que quitar la primera no tiene que
+   * repintar a las otras dos.
+   */
+  const alternarPublicacion = (id: string) =>
+    setElegidasIds((previas) => alternarElegida(previas, id, elegidas[0]?.id));
 
   const sinColor =
     conColor && base ? base.grupos.filter((g) => g.color === null).length : 0;
@@ -328,32 +309,16 @@ export function PanelRendimiento({
 
       {/* Los selectores de publicación y de radios: solo la telaraña los usa. */}
       {esTelarana && (
-        <div className="tarjeta space-y-3 p-3">
-          <div className="flex flex-wrap items-end gap-3">
-            {Array.from({ length: MAXIMO_POLIGONOS }, (_, i) => (
-              <div key={i} className="min-w-0 flex-1 space-y-1" style={{ minWidth: "16rem" }}>
-                <label className="etiqueta" htmlFor={`pub-${i}`}>
-                  {i === 0 ? "Publicación" : `Comparar con (${i + 1}.ª)`}
-                </label>
-                <select
-                  id={`pub-${i}`}
-                  value={elegidasIds[i] ?? (i === 0 ? (elegidas[0]?.id ?? "") : "")}
-                  onChange={(e) => elegir(i, e.target.value)}
-                  className="campo w-full"
-                >
-                  <option value="">{i === 0 ? "— Elige una —" : "— Ninguna —"}</option>
-                  {elegibles.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {(p.titulo ?? "Sin título").slice(0, 70)} · {p.cuenta} ·{" "}
-                      {fechaCorta(p.fecha)} · {escribirEnEje(valorEnEje(p, ejeY), ejeY)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
-          </div>
+        <>
+          <SelectorPublicaciones
+            puntos={puntos}
+            metrica={ejeY}
+            elegidasIds={elegidas.map((p) => p.id)}
+            alAlternar={alternarPublicacion}
+            alLimpiar={() => setElegidasIds([])}
+          />
 
-          <div>
+          <div className="tarjeta p-3">
             <p className="etiqueta mb-1">Radios de la telaraña</p>
             <div className="flex flex-wrap gap-1.5">
               {EJES_TELARANA.map((e) => {
@@ -381,7 +346,7 @@ export function PanelRendimiento({
               «le fue igual al promedio».
             </p>
           </div>
-        </div>
+        </>
       )}
 
       <section className="tarjeta overflow-hidden">
@@ -422,8 +387,8 @@ export function PanelRendimiento({
               Elige una publicación para dibujar su telaraña.
               <br />
               <span className="text-xs text-[var(--color-tinta-tenue)]">
-                La lista de arriba muestra las de más{" "}
-                {NOMBRE_EJE[ejeY].toLowerCase()} del período.
+                Arriba puedes buscarla por título o por hashtag, o filtrar por
+                serie.
               </span>
             </p>
           ) : telarana.ejes.length < MINIMO_RADIOS ? (

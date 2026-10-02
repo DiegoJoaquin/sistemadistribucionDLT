@@ -1032,6 +1032,124 @@ export function construirRanking(
 /* Telaraña: una publicación contra su línea                           */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* Elegir una publicación entre miles                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Texto comparable para buscar.
+ *
+ * Sin tildes y sin mayúsculas por la misma razón que los hashtags se
+ * normalizan: quien busca "quecambio" tiene que encontrar #QUÉCAMBIÓ, y quien
+ * escribe "Sparta" tiene que encontrar SPARTA. El numeral se quita porque el
+ * hashtag se guarda sin él, así que buscar "#sparta" tiene que funcionar igual.
+ */
+export function paraBuscar(texto: string): string {
+  return texto
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/#/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Si una publicación calza con lo que se escribió en el buscador.
+ *
+ * Busca en el título, en el hashtag y en el nombre de la cuenta, porque son las
+ * tres formas en que alguien se acuerda de una publicación. Todas las palabras
+ * de la consulta tienen que aparecer en alguna parte —no la frase entera— así
+ * que "sparta reel" encuentra la que tiene las dos cosas sin importar el orden.
+ */
+export function coincideBusqueda(p: PublicacionPunto, consulta: string): boolean {
+  const palabras = paraBuscar(consulta).split(/\s+/).filter(Boolean);
+  if (palabras.length === 0) return true;
+
+  const heno = paraBuscar(
+    [p.titulo ?? "", p.hashtag ?? "", p.cuenta, p.fecha].join(" "),
+  );
+  return palabras.every((palabra) => heno.includes(palabra));
+}
+
+export interface SerieDisponible {
+  /** La clave para filtrar: el hashtag, o `SIN_CLASIFICAR` si no tiene. */
+  clave: string;
+  etiqueta: string;
+  /** Publicaciones de esa serie en el período. */
+  n: number;
+}
+
+/**
+ * Las series que hay en el período, de más publicaciones a menos.
+ *
+ * Es lo que hace falta para poder elegir: sin la lista, encontrar una serie
+ * entre miles de publicaciones es adivinar cómo se escribió el hashtag.
+ */
+export function seriesDisponibles(
+  puntos: readonly PublicacionPunto[],
+): SerieDisponible[] {
+  const cuenta = new Map<string, number>();
+  for (const p of puntos) {
+    if (p.publicaciones !== 1) continue;
+    const clave = p.hashtag ?? SIN_CLASIFICAR;
+    cuenta.set(clave, (cuenta.get(clave) ?? 0) + 1);
+  }
+
+  const series = [...cuenta.entries()]
+    .filter(([clave]) => clave !== SIN_CLASIFICAR)
+    .sort(([a, na], [b, nb]) => nb - na || a.localeCompare(b, "es"))
+    .map(([clave, n]) => ({ clave, etiqueta: clave, n }));
+
+  // Las sin hashtag al final: son el resto, no una serie.
+  const sin = cuenta.get(SIN_CLASIFICAR);
+  if (sin) {
+    series.push({
+      clave: SIN_CLASIFICAR,
+      etiqueta: etiquetaDeGrupo(SIN_CLASIFICAR, "serie"),
+      n: sin,
+    });
+  }
+
+  return series;
+}
+
+export interface FiltroCandidatas {
+  /** Por cuál métrica se ordena la lista. */
+  metrica: Eje;
+  /** Texto del buscador. Vacío = no filtra. */
+  consulta?: string;
+  /** Series elegidas. Vacío = todas. */
+  series?: ReadonlySet<string>;
+}
+
+/**
+ * Las publicaciones entre las que se puede elegir, filtradas y ordenadas.
+ *
+ * Las que no traen la métrica de orden NO se dejan fuera: se van al final. Que
+ * una publicación no tenga me gusta no es razón para que no se pueda comparar
+ * por sus comentarios, y sacarla de la lista la volvía imposible de encontrar.
+ */
+export function candidatas(
+  puntos: readonly PublicacionPunto[],
+  { metrica, consulta = "", series }: FiltroCandidatas,
+): PublicacionPunto[] {
+  const filtrar = series !== undefined && series.size > 0;
+
+  return puntos
+    // §9.5 — una fila que representa varias publicaciones no es una.
+    .filter((p) => p.publicaciones === 1)
+    .filter((p) => !filtrar || series.has(p.hashtag ?? SIN_CLASIFICAR))
+    .filter((p) => coincideBusqueda(p, consulta))
+    .map((p) => ({ p, v: valorEnEje(p, metrica) }))
+    .sort(
+      (a, b) =>
+        // Las que no traen la métrica van al fondo, no al principio.
+        (b.v ?? -Infinity) - (a.v ?? -Infinity) ||
+        b.p.fecha.localeCompare(a.p.fecha),
+    )
+    .map((x) => x.p);
+}
+
 /**
  * Contra qué se compara una publicación.
  *
@@ -1094,6 +1212,30 @@ export const MINIMO_RADIOS = 3;
 
 /** Cuántas publicaciones se pueden superponer sin que la figura se ensucie. */
 export const MAXIMO_POLIGONOS = 3;
+
+/**
+ * Agrega o quita una publicación de la comparación.
+ *
+ * El orden importa y se conserva: el color de cada figura sale de su puesto en
+ * la lista, así que quitar la primera no tiene que repintar a las otras dos.
+ *
+ * El caso raro es el primer clic. Al abrir la telaraña viene dibujada la mejor
+ * publicación del período sin que nadie la haya elegido —`implicita`—, y si al
+ * agregar una segunda se armara la lista solo con ella, la primera
+ * desaparecería del gráfico justo cuando el usuario quiso comparar dos. Así
+ * que ese primer clic las pone a las dos.
+ */
+export function alternarElegida(
+  previas: readonly string[],
+  id: string,
+  implicita?: string,
+): string[] {
+  if (previas.includes(id)) return previas.filter((x) => x !== id);
+  if (previas.length === 0 && implicita !== undefined && implicita !== id) {
+    return [implicita, id];
+  }
+  return previas.length >= MAXIMO_POLIGONOS ? [...previas] : [...previas, id];
+}
 
 /**
  * El promedio de una métrica en un conjunto de publicaciones.

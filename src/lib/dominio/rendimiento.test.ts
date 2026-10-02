@@ -7,6 +7,9 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  alternarElegida,
+  candidatas,
+  coincideBusqueda,
   construirCajas,
   construirDispersion,
   construirDistribucion,
@@ -24,6 +27,7 @@ import {
   PREGUNTA_GRAFICO,
   promedio,
   promedioDeNivel,
+  seriesDisponibles,
   type PublicacionPunto,
   reelesReactivos,
   SIN_CLASIFICAR,
@@ -1038,6 +1042,207 @@ describe("construirTelarana", () => {
       ejes: ["me_gusta", "comentarios", "engagement"],
     });
     expect(t.engagementAcotado).toBe(false);
+  });
+});
+
+describe("elegir una publicación entre miles", () => {
+  /*
+   * El hashtag se guarda normalizado —sin tildes, en mayúsculas y sin
+   * numeral—, así que el buscador tiene que normalizar igual: si no, escribir
+   * "#QuéCambió" no encuentra QUECAMBIO, que es como está guardado.
+   */
+  it("el buscador ignora tildes, mayúsculas y el numeral", () => {
+    const p = punto({ hashtag: "QUECAMBIO", titulo: "Resumen de la fecha" });
+    for (const consulta of ["quecambio", "QUÉCAMBIÓ", "#quecambio", "  Quecambio "]) {
+      expect(coincideBusqueda(p, consulta)).toBe(true);
+    }
+    expect(coincideBusqueda(p, "sparta")).toBe(false);
+  });
+
+  it("busca en el título, en el hashtag y en la cuenta", () => {
+    const p = punto({ hashtag: "SPARTA", titulo: "Gol de media cancha", cuenta: "TikTok DLT" });
+    expect(coincideBusqueda(p, "media cancha")).toBe(true);
+    expect(coincideBusqueda(p, "sparta")).toBe(true);
+    expect(coincideBusqueda(p, "tiktok")).toBe(true);
+  });
+
+  /*
+   * Todas las palabras, no la frase: así "sparta gol" encuentra la publicación
+   * aunque el hashtag y el título estén en puntas opuestas del texto.
+   */
+  it("pide todas las palabras, en cualquier orden", () => {
+    const p = punto({ hashtag: "SPARTA", titulo: "Gol de media cancha" });
+    expect(coincideBusqueda(p, "gol sparta")).toBe(true);
+    expect(coincideBusqueda(p, "sparta gol")).toBe(true);
+    expect(coincideBusqueda(p, "sparta penal")).toBe(false);
+  });
+
+  it("una consulta vacía no filtra nada", () => {
+    expect(coincideBusqueda(punto(), "")).toBe(true);
+    expect(coincideBusqueda(punto(), "   ")).toBe(true);
+  });
+
+  it("también se puede buscar por fecha", () => {
+    expect(coincideBusqueda(punto({ fecha: "2026-09-22" }), "2026-09")).toBe(true);
+  });
+
+  describe("seriesDisponibles", () => {
+    it("lista las series del período, de más publicaciones a menos", () => {
+      const s = seriesDisponibles([
+        punto({ hashtag: "SPARTA" }),
+        punto({ hashtag: "SPARTA" }),
+        punto({ hashtag: "FECHA21" }),
+      ]);
+      expect(s.map((x) => [x.etiqueta, x.n])).toEqual([
+        ["SPARTA", 2],
+        ["FECHA21", 1],
+      ]);
+    });
+
+    it("las sin hashtag van al final y con su propio nombre", () => {
+      const s = seriesDisponibles([punto({ hashtag: null }), punto({ hashtag: "SPARTA" })]);
+      expect(s[s.length - 1].clave).toBe(SIN_CLASIFICAR);
+      expect(s[s.length - 1].etiqueta).toBe("Sin hashtag");
+    });
+
+    /* §9.5 — una fila que representa varias publicaciones no es una. */
+    it("no cuenta las filas que representan varias publicaciones", () => {
+      const s = seriesDisponibles([
+        punto({ hashtag: "SPARTA" }),
+        punto({ hashtag: "SPARTA", publicaciones: 4 }),
+      ]);
+      expect(s[0].n).toBe(1);
+    });
+
+    it("sin publicaciones devuelve una lista vacía, no una serie inventada", () => {
+      expect(seriesDisponibles([])).toEqual([]);
+    });
+  });
+
+  describe("candidatas", () => {
+    const lote = [
+      punto({ id: "a", hashtag: "SPARTA", titulo: "Gol", me_gusta: 100 }),
+      punto({ id: "b", hashtag: "SPARTA", titulo: "Penal", me_gusta: 300 }),
+      punto({ id: "c", hashtag: "FECHA21", titulo: "Resumen", me_gusta: 200 }),
+      punto({ id: "d", hashtag: null, titulo: "Suelta", me_gusta: 50 }),
+    ];
+
+    it("ordena por la métrica, de mayor a menor", () => {
+      expect(candidatas(lote, { metrica: "me_gusta" }).map((p) => p.id)).toEqual([
+        "b",
+        "c",
+        "a",
+        "d",
+      ]);
+    });
+
+    /*
+     * Que una publicación no tenga me gusta no es razón para que no se pueda
+     * comparar por sus comentarios. Sacarla de la lista la volvía imposible de
+     * encontrar; va al fondo.
+     */
+    it("las que no traen la métrica van al final, no se descartan", () => {
+      const conHueco = [...lote, punto({ id: "e", me_gusta: null })];
+      const orden = candidatas(conHueco, { metrica: "me_gusta" }).map((p) => p.id);
+      expect(orden).toHaveLength(5);
+      expect(orden[orden.length - 1]).toBe("e");
+    });
+
+    it("filtra por las series elegidas", () => {
+      expect(
+        candidatas(lote, { metrica: "me_gusta", series: new Set(["SPARTA"]) }).map(
+          (p) => p.id,
+        ),
+      ).toEqual(["b", "a"]);
+    });
+
+    it("se pueden elegir varias series a la vez", () => {
+      expect(
+        candidatas(lote, {
+          metrica: "me_gusta",
+          series: new Set(["SPARTA", "FECHA21"]),
+        }),
+      ).toHaveLength(3);
+    });
+
+    it("las sin hashtag se pueden elegir como si fueran una serie", () => {
+      expect(
+        candidatas(lote, { metrica: "me_gusta", series: new Set([SIN_CLASIFICAR]) }).map(
+          (p) => p.id,
+        ),
+      ).toEqual(["d"]);
+    });
+
+    it("no elegir ninguna serie es elegirlas todas", () => {
+      expect(candidatas(lote, { metrica: "me_gusta", series: new Set() })).toHaveLength(4);
+    });
+
+    it("el buscador y las series se aplican juntos", () => {
+      expect(
+        candidatas(lote, {
+          metrica: "me_gusta",
+          series: new Set(["SPARTA"]),
+          consulta: "penal",
+        }).map((p) => p.id),
+      ).toEqual(["b"]);
+    });
+
+    /* §9.5 — otra vez: una marca es una publicación. */
+    it("deja fuera las filas que representan varias publicaciones", () => {
+      const conAgrupada = [...lote, punto({ id: "g", publicaciones: 3, me_gusta: 9_999 })];
+      expect(candidatas(conAgrupada, { metrica: "me_gusta" }).map((p) => p.id)).not.toContain(
+        "g",
+      );
+    });
+  });
+});
+
+describe("alternarElegida", () => {
+  it("agrega al final y conserva el orden", () => {
+    expect(alternarElegida(["a"], "b")).toEqual(["a", "b"]);
+    expect(alternarElegida(["a", "b"], "c")).toEqual(["a", "b", "c"]);
+  });
+
+  it("volver a tocarla la quita", () => {
+    expect(alternarElegida(["a", "b", "c"], "b")).toEqual(["a", "c"]);
+  });
+
+  /*
+   * El color de cada figura sale de su puesto en la lista. Si quitar la primera
+   * reordenara a las otras, las dos que quedan cambiarían de color sin que
+   * nadie las haya tocado.
+   */
+  it("quitar la primera no reordena a las que quedan", () => {
+    expect(alternarElegida(["a", "b", "c"], "a")).toEqual(["b", "c"]);
+  });
+
+  it("no pasa del tope de figuras", () => {
+    expect(alternarElegida(["a", "b", "c"], "d")).toEqual(["a", "b", "c"]);
+  });
+
+  /*
+   * El caso raro: al abrir la telaraña viene dibujada la mejor publicación sin
+   * que nadie la haya elegido. Si el primer clic armara la lista solo con la
+   * nueva, la que estaba dibujada desaparecería justo cuando el usuario quiso
+   * comparar dos.
+   */
+  it("el primer clic conserva la que venía dibujada sola", () => {
+    expect(alternarElegida([], "b", "a")).toEqual(["a", "b"]);
+  });
+
+  it("si el primer clic es sobre la que ya venía dibujada, no la duplica", () => {
+    expect(alternarElegida([], "a", "a")).toEqual(["a"]);
+  });
+
+  it("sin ninguna dibujada, el primer clic elige solo esa", () => {
+    expect(alternarElegida([], "b")).toEqual(["b"]);
+  });
+
+  it("nunca devuelve el mismo arreglo que recibió", () => {
+    const previas = ["a", "b", "c"];
+    // Ni en el caso en que no cambia nada: devolver el mismo objeto haría que
+    // React no volviera a dibujar si algo más hubiera cambiado con él.
+    expect(alternarElegida(previas, "d")).not.toBe(previas);
   });
 });
 
