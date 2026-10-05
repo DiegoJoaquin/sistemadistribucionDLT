@@ -26,7 +26,6 @@ import {
   etiquetaDeGrupo,
   EXPLICACION_NIVEL,
   MAXIMO_COLORES,
-  MAXIMO_POLIGONOS,
   MINIMO_CAJA,
   MINIMO_RADIOS,
   type Nivel,

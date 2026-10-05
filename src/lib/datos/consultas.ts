@@ -995,3 +995,82 @@ export async function rangoDeRegistros(): Promise<{ desde: string; hasta: string
     hasta: (ult[0] as { fecha: string }).fecha,
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* Meses que se pueden convertir en línea base                         */
+/* ------------------------------------------------------------------ */
+
+export interface MesConRegistros {
+  /** "YYYY-MM" */
+  mes: string;
+  /** Publicaciones del mes, contando lo que representa cada fila (§9.5). */
+  publicaciones: number;
+  /** Filas que valen por varias publicaciones y no se pueden copiar (§9.5). */
+  agrupadas: number;
+  /** true si ya existe una línea base para ese mes. */
+  yaTieneLineaBase: boolean;
+  /** Publicaciones que ya tiene cargadas esa línea base, si existe. */
+  publicacionesEnBase: number;
+}
+
+/**
+ * Los meses que tienen registros, para poder armar su línea base sin reimportar.
+ *
+ * Se cuenta acá y no en la base porque hay que cruzar dos tablas y distinguir
+ * filas de publicaciones (§9.5): una fila cargada a mano puede valer por tres,
+ * y quien elige el mes tiene que ver las dos cifras para saber qué va a perder.
+ */
+export async function mesesConRegistros(): Promise<MesConRegistros[]> {
+  const supabase = await supabaseServidor();
+
+  const porMes = new Map<string, { publicaciones: number; agrupadas: number }>();
+
+  for (let inicio = 0; ; inicio += TANDA) {
+    const { data, error } = await supabase
+      .from("registros")
+      .select("fecha, publicaciones")
+      .order("fecha", { ascending: true })
+      .range(inicio, inicio + TANDA - 1);
+
+    if (error) throw new Error(`No pude leer los meses: ${error.message}`);
+    const tanda = (data ?? []) as { fecha: string; publicaciones: number }[];
+
+    for (const r of tanda) {
+      const mes = r.fecha.slice(0, 7);
+      const acc = porMes.get(mes) ?? { publicaciones: 0, agrupadas: 0 };
+      acc.publicaciones += r.publicaciones;
+      if (r.publicaciones !== 1) acc.agrupadas += 1;
+      porMes.set(mes, acc);
+    }
+
+    if (tanda.length < TANDA) break;
+    // Mismo tope de seguridad que el resto de las lecturas paginadas.
+    if (inicio > 200_000) break;
+  }
+
+  const { data: lineas } = await supabase.from("lineas_base").select("id, mes");
+  const yaExisten = new Map(
+    ((lineas ?? []) as { id: string; mes: string }[]).map((l) => [l.mes.slice(0, 7), l.id]),
+  );
+
+  const cargadas = new Map<string, number>();
+  for (const [mes, id] of yaExisten) {
+    const { count } = await supabase
+      .from("publicaciones_base")
+      .select("id", { count: "exact", head: true })
+      .eq("linea_base_id", id);
+    cargadas.set(mes, count ?? 0);
+  }
+
+  return [...porMes.entries()]
+    .map(([mes, acc]) => ({
+      mes,
+      publicaciones: acc.publicaciones,
+      agrupadas: acc.agrupadas,
+      yaTieneLineaBase: yaExisten.has(mes),
+      publicacionesEnBase: cargadas.get(mes) ?? 0,
+    }))
+    // Del más reciente al más viejo: el que se quiere usar casi siempre es el
+    // mes que acaba de cerrar.
+    .sort((a, b) => b.mes.localeCompare(a.mes));
+}

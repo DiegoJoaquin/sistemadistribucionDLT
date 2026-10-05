@@ -17,6 +17,7 @@ import {
   graficosDeLaSemana,
   informeDeCliente,
   listarCuentas,
+  listarRegistrosDelRango,
 } from "./consultas";
 import {
   MAXIMO_DESTINATARIOS,
@@ -24,6 +25,12 @@ import {
 } from "@/lib/correo/direcciones";
 import { destinatariosReporte } from "@/lib/correo/entorno";
 import { enviarCorreo } from "@/lib/correo/enviar";
+import {
+  aPublicacionesBase,
+  esMesValido,
+  rangoDelMes,
+  type RegistroParaBase,
+} from "@/lib/dominio/base-desde-registro";
 import { fechaCorta, semanaDe } from "@/lib/dominio/formato";
 import type { Red } from "@/lib/dominio/redes";
 import {
@@ -488,11 +495,19 @@ interface ResultadoEscritura {
   fallidas: { titulo: string; motivo: string }[];
 }
 
-/** Con qué nombre se reporta una fila que no se pudo escribir. */
+/**
+ * Con qué nombre se reporta una fila que no se pudo escribir.
+ *
+ * Mira los nombres de las dos tablas: el registro llama al texto
+ * `titulo_contenido` y la línea base `caption`, pero para quien lee el error es
+ * lo mismo — necesita reconocer la publicación que falló.
+ */
 function rotularFila(fila: Record<string, unknown>): string {
-  const titulo = fila.titulo_contenido;
-  if (typeof titulo === "string" && titulo) return titulo.slice(0, 60);
-  return String(fila.id_externo ?? fila.fecha ?? "sin título");
+  for (const clave of ["titulo_contenido", "caption"]) {
+    const texto = fila[clave];
+    if (typeof texto === "string" && texto) return texto.slice(0, 60);
+  }
+  return String(fila.id_externo ?? fila.fecha ?? fila.publicado_en ?? "sin título");
 }
 
 /**
@@ -507,13 +522,14 @@ function rotularFila(fila: Record<string, unknown>): string {
 async function insertarEnTandas(
   supabase: SupabaseServidor,
   filas: readonly Record<string, unknown>[],
+  tabla: "registros" | "publicaciones_base" = "registros",
 ): Promise<ResultadoEscritura> {
   let escritas = 0;
   const fallidas: ResultadoEscritura["fallidas"] = [];
 
   for (let i = 0; i < filas.length; i += TANDA_ESCRITURA) {
     const lote = filas.slice(i, i + TANDA_ESCRITURA);
-    const { error } = await supabase.from("registros").insert(lote);
+    const { error } = await supabase.from(tabla).insert(lote);
 
     if (!error) {
       escritas += lote.length;
@@ -522,7 +538,7 @@ async function insertarEnTandas(
 
     // La tanda falló: se reintenta una por una para aislar la culpable.
     for (const fila of lote) {
-      const { error: suyo } = await supabase.from("registros").insert([fila]);
+      const { error: suyo } = await supabase.from(tabla).insert([fila]);
       if (suyo) fallidas.push({ titulo: rotularFila(fila), motivo: suyo.message });
       else escritas += 1;
     }
@@ -982,6 +998,173 @@ export async function enviarReporteSemanal(
   }
 
   return { ok: true, mensaje: envio.mensaje, destinatarios: para };
+}
+
+export interface ResultadoBaseDesdeRegistro extends Resultado {
+  detalle?: {
+    mes: string;
+    copiadas: number;
+    noEntraron: number;
+    agrupadas: number;
+    publicacionesAgrupadas: number;
+    sinHora: number;
+    activada: boolean;
+    reemplazo: number;
+  };
+}
+
+/**
+ * Arma la línea base de un mes con lo que ya está cargado en el registro.
+ *
+ * Es el camino normal desde que el registro guarda una fila por publicación con
+ * el desglose completo: los datos del mes YA están en la plataforma, y volver a
+ * subir las mismas exportaciones para obtener los mismos números es trabajo que
+ * no cambia nada. La importación de archivos sigue existiendo para un mes que
+ * nunca se cargó al registro.
+ *
+ * No pisa nada por su cuenta: si la línea base de ese mes ya tiene
+ * publicaciones, hay que pedir el reemplazo a propósito. Rehacerla borra lo que
+ * estaba —incluidas las reclasificaciones a mano (§5.2)— y eso mueve la vara
+ * contra la que se compara todo lo demás.
+ */
+export async function crearLineaBaseDesdeRegistro(
+  _previo: ResultadoBaseDesdeRegistro | null,
+  fd: FormData,
+): Promise<ResultadoBaseDesdeRegistro> {
+  const { usuarioId } = await exigirSesion();
+
+  const mes = String(fd.get("mes") ?? "").trim();
+  if (!esMesValido(mes)) {
+    return { ok: false, mensaje: "Elige el mes con el que quieres armar la línea base." };
+  }
+
+  const reemplazar = fd.get("reemplazar") === "on";
+  const activar = fd.get("activar") === "on";
+
+  const { desde, hasta } = rangoDelMes(mes);
+  const registros = await listarRegistrosDelRango(desde, hasta);
+
+  if (registros.length === 0) {
+    return {
+      ok: false,
+      mensaje: `No hay registros cargados en ${mes}. Súbelos primero desde el registro, o importa los archivos del mes acá abajo.`,
+    };
+  }
+
+  const supabase = await supabaseServidor();
+  const primerDia = `${mes}-01`;
+
+  // Una línea base por mes; si ya existe, se reutiliza.
+  const { data: existente } = await supabase
+    .from("lineas_base")
+    .select("id")
+    .eq("mes", primerDia)
+    .maybeSingle<{ id: string }>();
+
+  let lineaBaseId = existente?.id;
+
+  /*
+   * Si ya tiene publicaciones, no se toca sin permiso explícito. Rehacerla
+   * borra las reclasificaciones a mano (§5.2) y cambia los promedios contra los
+   * que se comparan todos los días cargados después.
+   */
+  let reemplazo = 0;
+  if (lineaBaseId) {
+    const { count } = await supabase
+      .from("publicaciones_base")
+      .select("id", { count: "exact", head: true })
+      .eq("linea_base_id", lineaBaseId);
+
+    reemplazo = count ?? 0;
+    if (reemplazo > 0 && !reemplazar) {
+      return {
+        ok: false,
+        mensaje: `La línea base de ${mes} ya tiene ${reemplazo} publicaciones. Marca «reemplazar lo que ya está» para rehacerla desde el registro; ten en cuenta que eso borra las reclasificaciones hechas a mano.`,
+      };
+    }
+  }
+
+  const conversion = aPublicacionesBase(
+    registros as unknown as RegistroParaBase[],
+    lineaBaseId ?? "",
+  );
+
+  if (conversion.filas.length === 0) {
+    return {
+      ok: false,
+      mensaje: `Las ${registros.length} filas de ${mes} representan varias publicaciones cada una, así que ninguna se puede copiar como publicación suelta (§9.5).`,
+    };
+  }
+
+  if (!lineaBaseId) {
+    const { data, error } = await supabase
+      .from("lineas_base")
+      .insert({ mes: primerDia, nombre: mes, creado_por: usuarioId })
+      .select("id")
+      .single<{ id: string }>();
+    if (error || !data) {
+      return { ok: false, mensaje: error?.message ?? "No pude crear la línea base." };
+    }
+    lineaBaseId = data.id;
+  } else if (reemplazo > 0) {
+    const { error } = await supabase
+      .from("publicaciones_base")
+      .delete()
+      .eq("linea_base_id", lineaBaseId);
+    if (error) {
+      return { ok: false, mensaje: `No pude vaciar la línea base: ${error.message}` };
+    }
+  }
+
+  // El id real recién se conoce acá, así que se completa ahora.
+  for (const f of conversion.filas) f.linea_base_id = lineaBaseId;
+
+  const puestas = await insertarEnTandas(
+    supabase,
+    conversion.filas as unknown as Record<string, unknown>[],
+    "publicaciones_base",
+  );
+
+  if (puestas.escritas === 0) {
+    return {
+      ok: false,
+      mensaje: `No pude escribir ninguna publicación: ${
+        puestas.fallidas[0]?.motivo ?? "error desconocido"
+      }`,
+    };
+  }
+
+  /*
+   * Activarla es el motivo por el que casi siempre se arma: en octubre se
+   * compara contra septiembre. Igual va como casilla, porque rehacer una línea
+   * base vieja para corregirla no tiene por qué cambiar la referencia.
+   */
+  let activada = false;
+  if (activar) {
+    const { error } = await supabase.rpc("activar_linea_base", { p_id: lineaBaseId });
+    activada = !error;
+  }
+
+  revalidarVistasDeLineaBase();
+
+  return {
+    ok: true,
+    mensaje: `Línea base de ${mes} armada con ${puestas.escritas} publicaciones del registro.${
+      puestas.fallidas.length > 0
+        ? ` ${puestas.fallidas.length} no entraron: ${puestas.fallidas[0].motivo}`
+        : ""
+    }`,
+    detalle: {
+      mes,
+      copiadas: puestas.escritas,
+      noEntraron: puestas.fallidas.length,
+      agrupadas: conversion.agrupadas,
+      publicacionesAgrupadas: conversion.publicacionesAgrupadas,
+      sinHora: conversion.sinHora,
+      activada,
+      reemplazo,
+    },
+  };
 }
 
 export async function activarLineaBase(fd: FormData): Promise<void> {

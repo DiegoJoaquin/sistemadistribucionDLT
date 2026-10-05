@@ -1,14 +1,19 @@
 import Link from "next/link";
+import { FormularioBaseDesdeRegistro } from "@/componentes/FormularioBaseDesdeRegistro";
 import { FormularioImportar } from "@/componentes/FormularioImportar";
 import { Cifra, Insignia, Nota, Pct, Vacio } from "@/componentes/ui";
 import { activarLineaBase, borrarLineaBase } from "@/lib/datos/acciones";
-import { listarLineasBase, resumenLineaBase } from "@/lib/datos/consultas";
+import {
+  listarLineasBase,
+  mesesConRegistros,
+  resumenLineaBase,
+} from "@/lib/datos/consultas";
 import { mesActualISO, mesLargo } from "@/lib/dominio/formato";
 
 export const metadata = { title: "Línea base · KPIs DLT" };
 
 export default async function PaginaBase() {
-  const lineas = await listarLineasBase();
+  const [lineas, meses] = await Promise.all([listarLineasBase(), mesesConRegistros()]);
   const resumenes = await Promise.all(
     lineas.map(async (l) => ({ linea: l, filas: await resumenLineaBase(l.id) })),
   );
@@ -45,19 +50,32 @@ export default async function PaginaBase() {
         </div>
       )}
 
-      <FormularioImportar mesPorDefecto={mesActualISO()} />
+      <FormularioBaseDesdeRegistro meses={meses} mesActual={mesActualISO()} />
 
-      <Nota>
-        Para Instagram conviene subir <strong>las dos fuentes</strong>: la
-        exportación de Iconosquare trae alcance y visualizaciones pero no nuevos
-        seguidores, y el CSV de Meta Business Suite sí los trae. La primera que
-        subas define cuántas publicaciones tiene el mes; la segunda solo{" "}
-        <strong>completa los campos vacíos</strong> de esas mismas publicaciones,
-        sin agregar filas, así que el mes no se cuenta dos veces. El desfase
-        horario entre ambos exportadores (Meta reporta 3 horas atrás) se estima
-        solo. Twitter/X no tiene exportación con alcance: esas filas se cargan a
-        mano en el registro.
-      </Nota>
+      <details className="tarjeta p-4">
+        <summary className="cursor-pointer text-sm font-semibold">
+          Importar los archivos de un mes
+          <span className="ml-2 font-normal text-[var(--color-tinta-suave)]">
+            — solo si ese mes no está cargado en el registro
+          </span>
+        </summary>
+
+        <div className="mt-3 space-y-4">
+          <FormularioImportar mesPorDefecto={mesActualISO()} />
+
+          <Nota>
+            Para Instagram conviene subir <strong>las dos fuentes</strong>: la
+            exportación de Iconosquare trae alcance y visualizaciones pero no
+            nuevos seguidores, y el CSV de Meta Business Suite sí los trae. La
+            primera que subas define cuántas publicaciones tiene el mes; la
+            segunda solo <strong>completa los campos vacíos</strong> de esas
+            mismas publicaciones, sin agregar filas, así que el mes no se cuenta
+            dos veces. El desfase horario entre ambos exportadores (Meta reporta
+            3 horas atrás) se estima solo. Twitter/X no tiene exportación con
+            alcance: esas filas se cargan a mano en el registro.
+          </Nota>
+        </div>
+      </details>
 
       {lineas.length === 0 ? (
         <Vacio
