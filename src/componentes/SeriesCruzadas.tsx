@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Delta } from "@/componentes/Delta";
 import { Cifra, Pct } from "@/componentes/ui";
 import type { SerieCruzada } from "@/lib/dominio/catastro";
@@ -30,7 +31,15 @@ export function SeriesCruzadas({ series }: { series: SerieCruzada[] }) {
         {series.map((serie) => (
           <li key={serie.hashtag} className="px-4 py-3">
             <div className="flex flex-wrap items-baseline gap-2">
-              <h3 className="text-[13px] font-semibold">#{serie.hashtag}</h3>
+              <h3 className="text-[13px] font-semibold">
+                <Link
+                  href={`/hashtags?h=${encodeURIComponent(serie.hashtag)}`}
+                  className="underline-offset-2 hover:underline"
+                  title="Ver cómo evoluciona este hashtag"
+                >
+                  #{serie.hashtag}
+                </Link>
+              </h3>
               <span className="text-[11px] text-[var(--color-tinta-tenue)]">
                 {serie.publicaciones}{" "}
                 {serie.publicaciones === 1 ? "publicación" : "publicaciones"} en{" "}

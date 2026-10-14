@@ -7,6 +7,7 @@ const ENLACES = [
   { href: "/registro", texto: "Registro" },
   { href: "/panel", texto: "Panel diario" },
   { href: "/catastro", texto: "Catastro semanal" },
+  { href: "/hashtags", texto: "Hashtags" },
   { href: "/analitica", texto: "Analítica" },
   { href: "/rendimiento", texto: "Rendimiento" },
   { href: "/historico", texto: "Histórico" },

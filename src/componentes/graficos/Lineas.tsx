@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
-import type { EvolucionSemanal } from "@/lib/dominio/analitica";
+import type { MetricaGrafico, SerieCuenta } from "@/lib/dominio/analitica";
 import { esPorcentaje, NOMBRE_METRICA } from "@/lib/dominio/analitica";
 import { numero, numeroFino, porcentaje } from "@/lib/dominio/formato";
 import { colorDe, EJE, GRILLA } from "@/lib/dominio/paleta";
@@ -16,6 +16,20 @@ const ALTO = 300;
 const MARGEN = { arriba: 16, derecha: 96, abajo: 34, izquierda: 60 };
 const TRAZO_ANCHO = ANCHO - MARGEN.izquierda - MARGEN.derecha;
 const TRAZO_ALTO = ALTO - MARGEN.arriba - MARGEN.abajo;
+
+/**
+ * Para contar publicaciones: un tope cuyas cuatro marcas sean enteras. Con el
+ * tope general, un máximo de 3 daba marcas en 1,25 y 3,75 publicaciones, y
+ * redondeadas se leían como 1 y 4.
+ */
+function topeEntero(max: number): number {
+  const paso = Math.max(1, max / 4);
+  const orden = 10 ** Math.floor(Math.log10(paso));
+  for (const p of orden < 10 ? [1, 2, 5, 10] : [1, 2, 2.5, 5, 10]) {
+    if (p * orden >= paso) return 4 * p * orden;
+  }
+  return 40 * orden;
+}
 
 /** Redondea el tope a un número limpio, para que las marcas del eje se lean. */
 function topeLimpio(max: number): number {
@@ -34,9 +48,22 @@ function etiquetaSemana(desde: string): string {
   return `${d} ${meses[m - 1]}`;
 }
 
-function formatearValor(v: number | null, pct: boolean): string {
+function formatearValor(v: number | null, pct: boolean, entero = false): string {
   if (v === null) return "—";
+  if (entero) return numero(v);
   return pct ? porcentaje(v) : v < 100 ? numeroFino(v) : numero(v);
+}
+
+/**
+ * Lo que dibuja: un punto por período y una línea por serie. Las series suelen
+ * ser cuentas, pero pueden ser cualquier cosa con clave y nombre —en la vista
+ * de hashtags, cada línea es un hashtag—.
+ */
+export interface DatosLineas {
+  semanas: { desde: string; hasta: string }[];
+  series: SerieCuenta[];
+  /** "publicaciones" cuenta cuántas veces se publicó: cero es un dato. */
+  metrica: MetricaGrafico | "publicaciones";
 }
 
 /**
@@ -54,22 +81,35 @@ export function Lineas({
   datos,
   colores,
   ocultas,
+  rotuloPeriodo = etiquetaSemana,
+  tituloPeriodo = (desde) => `Semana del ${etiquetaSemana(desde)}`,
+  queSon = "por cuenta",
 }: {
-  datos: EvolucionSemanal;
+  datos: DatosLineas;
   colores: Map<string, string>;
-  /** Cuentas que el usuario apagó en la leyenda. */
+  /** Series que el usuario apagó en la leyenda. */
   ocultas: Set<string>;
+  /** La etiqueta de cada período bajo el eje. Por defecto, "22 sep". */
+  rotuloPeriodo?: (desde: string) => string;
+  /** El encabezado del tooltip. */
+  tituloPeriodo?: (desde: string) => string;
+  /** Para la descripción accesible: "por cuenta", "por hashtag". */
+  queSon?: string;
 }) {
   const id = useId();
   const [activa, setActiva] = useState<number | null>(null);
 
   const visibles = datos.series.filter((s) => !ocultas.has(s.cuentaId));
-  const pct = esPorcentaje(datos.metrica);
+  const entero = datos.metrica === "publicaciones";
+  const pct = datos.metrica !== "publicaciones" && esPorcentaje(datos.metrica);
+  const nombreMetrica =
+    datos.metrica === "publicaciones" ? "Publicaciones" : NOMBRE_METRICA[datos.metrica];
 
   const valores = visibles
     .flatMap((s) => s.puntos)
     .filter((v): v is number => v !== null);
-  const tope = topeLimpio(valores.length > 0 ? Math.max(...valores) : 1);
+  const maximo = valores.length > 0 ? Math.max(...valores) : 1;
+  const tope = entero ? topeEntero(maximo) : topeLimpio(maximo);
 
   const n = datos.semanas.length;
   const x = (i: number) =>
@@ -115,7 +155,7 @@ export function Lineas({
         className="w-full"
         style={{ height: "auto" }}
         role="img"
-        aria-label={`Evolución semanal de ${NOMBRE_METRICA[datos.metrica].toLowerCase()} por cuenta. Los valores están en la tabla que sigue.`}
+        aria-label={`Evolución de ${nombreMetrica.toLowerCase()} ${queSon}. Los valores están en la tabla que sigue.`}
         onMouseLeave={() => setActiva(null)}
       >
         {/* Grilla: hairline sólida, un paso sobre la superficie. */}
@@ -150,7 +190,7 @@ export function Lineas({
               textAnchor="middle"
               className="fill-[var(--color-tinta-tenue)] text-[11px]"
             >
-              {etiquetaSemana(s.desde)}
+              {rotuloPeriodo(s.desde)}
             </text>
           ) : null,
         )}
@@ -215,7 +255,7 @@ export function Lineas({
                     y={y(s.puntos[ultimo]!) + 4}
                     className="fill-[var(--color-tinta-suave)] text-[11px] tabular-nums"
                   >
-                    {formatearValor(s.puntos[ultimo], pct)}
+                    {formatearValor(s.puntos[ultimo], pct, entero)}
                   </text>
                 </>
               )}
@@ -257,9 +297,7 @@ export function Lineas({
           role="status"
           className="pointer-events-none absolute left-1/2 top-2 z-10 w-max max-w-xs -translate-x-1/2 rounded-md border border-[var(--color-filete-fuerte)] bg-white px-3 py-2 text-[13px] shadow-sm"
         >
-          <p className="font-medium">
-            Semana del {etiquetaSemana(datos.semanas[activa].desde)}
-          </p>
+          <p className="font-medium">{tituloPeriodo(datos.semanas[activa].desde)}</p>
           <ul className="mt-1 space-y-0.5">
             {visibles.map((s) => (
               <li key={s.cuentaId} className="flex items-center gap-2">
@@ -270,7 +308,7 @@ export function Lineas({
                 />
                 <span className="text-[var(--color-tinta-suave)]">{s.nombre}</span>
                 <span className="ml-auto cifra font-medium">
-                  {formatearValor(s.puntos[activa], pct)}
+                  {formatearValor(s.puntos[activa], pct, entero)}
                 </span>
                 <span className="text-[11px] text-[var(--color-tinta-tenue)]">
                   {s.publicaciones[activa]} pub.

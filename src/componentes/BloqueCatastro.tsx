@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Delta } from "@/componentes/Delta";
 import { CabeceraCuenta, Cifra, Insignia, Pct } from "@/componentes/ui";
 import type {
@@ -117,7 +118,18 @@ function Fila({ linea }: { linea: LineaCatastro }) {
                 : undefined
             }
           >
-            {linea.etiqueta}
+            {linea.corte.tipo === "hashtag" ? (
+              // A la evolución del hashtag en el último año, en su vista propia.
+              <Link
+                href={`/hashtags?h=${encodeURIComponent(linea.corte.hashtag)}`}
+                className="underline-offset-2 hover:underline"
+                title="Ver cómo evoluciona este hashtag"
+              >
+                {linea.etiqueta}
+              </Link>
+            ) : (
+              linea.etiqueta
+            )}
           </span>
           {linea.serieNueva && <Insignia tono="aviso">serie nueva</Insignia>}
         </span>

@@ -26,6 +26,7 @@ import {
   evolucionSemanal,
   type FilaAnalitica,
 } from "@/lib/dominio/analitica";
+import { hashtagsDe, type PublicacionHashtag } from "@/lib/dominio/hashtags";
 import {
   construirInforme,
   type FilaInforme,
@@ -51,6 +52,7 @@ import type {
   LineaBaseRow,
   PublicacionBaseRow,
   RegistroConAutor,
+  RegistroRow,
   ReporteRow,
 } from "@/lib/supabase/tipos-db";
 
@@ -150,6 +152,81 @@ export async function listarRegistrosDelRango(
      * cortar que quedarse pidiendo tandas para siempre.
      */
     if (todos.length >= 200_000) return todos;
+  }
+}
+
+/**
+ * Las publicaciones del rango, ya con todos sus hashtags, para la vista de
+ * hashtags.
+ *
+ * Pide solo las columnas que esa vista usa y no `SELECT_REGISTRO`: un año de
+ * todas las cuentas son miles de filas, y el autor de cada una no se muestra.
+ */
+export async function publicacionesConHashtags(
+  desde: string,
+  hasta: string,
+  indice: Map<string, CuentaRow>,
+): Promise<PublicacionHashtag[]> {
+  const supabase = await supabaseServidor();
+  const salida: PublicacionHashtag[] = [];
+
+  for (let inicio = 0; ; inicio += TANDA) {
+    const { data, error } = await supabase
+      .from("registros")
+      .select(
+        "id, fecha, cuenta_id, categoria, tipo, publicaciones, alcance, visualizaciones, interacciones, nuevos_seguidores, hashtag, titulo_contenido, enlace",
+      )
+      .gte("fecha", desde)
+      .lte("fecha", hasta)
+      .order("fecha", { ascending: true })
+      .order("id", { ascending: true })
+      .range(inicio, inicio + TANDA - 1);
+
+    if (error) throw new Error(`No pude leer los registros: ${error.message}`);
+
+    const tanda = (data ?? []) as unknown as Pick<
+      RegistroRow,
+      | "id"
+      | "fecha"
+      | "cuenta_id"
+      | "categoria"
+      | "tipo"
+      | "publicaciones"
+      | "alcance"
+      | "visualizaciones"
+      | "interacciones"
+      | "nuevos_seguidores"
+      | "hashtag"
+      | "titulo_contenido"
+      | "enlace"
+    >[];
+
+    for (const r of tanda) {
+      const cuenta = indice.get(r.cuenta_id);
+      if (!cuenta) continue;
+      salida.push({
+        id: r.id,
+        fecha: r.fecha,
+        cuentaId: cuenta.id,
+        cuenta: cuenta.nombre,
+        red: cuenta.red,
+        categoria: r.categoria,
+        tipo: r.tipo,
+        publicaciones: r.publicaciones,
+        alcance: r.alcance,
+        visualizaciones: r.visualizaciones,
+        interacciones: r.interacciones,
+        nuevos_seguidores: r.nuevos_seguidores,
+        visitas_perfil: null,
+        vistas_seguidores: null,
+        vistas_no_seguidores: null,
+        hashtags: hashtagsDe(r.hashtag, r.titulo_contenido),
+        titulo: r.titulo_contenido,
+        enlace: r.enlace,
+      });
+    }
+
+    if (tanda.length < TANDA || salida.length >= 200_000) return salida;
   }
 }
 
