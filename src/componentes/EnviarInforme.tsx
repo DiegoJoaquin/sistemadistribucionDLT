@@ -40,6 +40,8 @@ export function EnviarInforme({
   hasta,
   porDefecto,
   faltantes,
+  tipo = "completo",
+  metrica,
 }: {
   cliente: string;
   nombreCliente: string;
@@ -49,6 +51,10 @@ export function EnviarInforme({
   porDefecto: string[];
   /** Variables de entorno que faltan para poder enviar. */
   faltantes: FaltanteCorreo[];
+  /** Qué informe sale: el completo o el de mejores reels. */
+  tipo?: "completo" | "reels";
+  /** Con qué métrica se ordenan los reels. */
+  metrica?: string;
 }) {
   const [estado, accion] = useActionState<ResultadoEnvioReporte | null, FormData>(
     enviarInformeCliente,
@@ -157,8 +163,11 @@ export function EnviarInforme({
           <input type="hidden" name="desde" value={desde} />
           <input type="hidden" name="hasta" value={hasta} />
           <input type="hidden" name="para" value={validos.join(", ")} />
+          <input type="hidden" name="tipo" value={tipo} />
+          {metrica && <input type="hidden" name="metrica" value={metrica} />}
           <p className="text-sm">
-            Se va a enviar el informe de <strong>{nombreCliente}</strong> a{" "}
+            Se va a enviar {tipo === "reels" ? "el informe de mejores reels" : "el informe"} de{" "}
+            <strong>{nombreCliente}</strong> a{" "}
             <strong>{validos.join(" y ")}</strong>. El correo no se puede
             deshacer.
           </p>

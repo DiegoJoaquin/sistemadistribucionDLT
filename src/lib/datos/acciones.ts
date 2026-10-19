@@ -16,6 +16,7 @@ import {
   clientePorId,
   graficosDeLaSemana,
   informeDeCliente,
+  mejoresDeCliente,
   listarCuentas,
   listarRegistrosDelRango,
 } from "./consultas";
@@ -32,6 +33,7 @@ import {
   type RegistroParaBase,
 } from "@/lib/dominio/base-desde-registro";
 import { fechaCorta, semanaDe } from "@/lib/dominio/formato";
+import { esMetricaMejores } from "@/lib/dominio/mejores";
 import type { Red } from "@/lib/dominio/redes";
 import {
   construirReporteCliente,
@@ -43,6 +45,7 @@ import {
   htmlSemanal,
   textoSemanal,
 } from "@/lib/reporte/semanal";
+import { htmlMejores, textoMejores } from "@/lib/reporte/mejores";
 import { urlPublica } from "@/lib/supabase/entorno";
 import {
   aFilasRegistro,
@@ -1376,6 +1379,33 @@ export async function enviarInformeCliente(
 
   const cliente = await clientePorId(clienteId);
   if (!cliente) return { ok: false, mensaje: "Ese cliente ya no existe." };
+
+  /*
+   * El informe de mejores reels sale por el mismo botón y con los mismos
+   * controles de destinatarios. El HTML se vuelve a armar acá, en el servidor:
+   * lo que llega del navegador es solo qué informe y de qué período.
+   */
+  if (String(fd.get("tipo") ?? "") === "reels") {
+    const metricaPedida = String(fd.get("metrica") ?? "");
+    const metrica = esMetricaMejores(metricaPedida) ? metricaPedida : "visualizaciones";
+    const mejores = await mejoresDeCliente(cliente, desde, hasta, metrica);
+    if (!mejores.hayDatos) {
+      return {
+        ok: false,
+        mensaje: `No hay reels de ${cliente.nombre} en ese período, así que el correo saldría vacío.`,
+      };
+    }
+    const periodo = `${fechaCorta(desde)} al ${fechaCorta(hasta)}`;
+    const envio = await enviarCorreo({
+      para,
+      asunto: `Los ${mejores.cuantos} mejores reels · ${cliente.nombre} · ${periodo}`,
+      html: htmlMejores(mejores, { urlBase: urlPublica() }),
+      texto: textoMejores(mejores),
+    });
+    if (!envio.ok) return { ok: false, mensaje: envio.mensaje };
+    revalidatePath("/informe");
+    return { ok: true, mensaje: envio.mensaje, destinatarios: para };
+  }
 
   const { informe, base } = await informeDeCliente(cliente, desde, hasta);
 

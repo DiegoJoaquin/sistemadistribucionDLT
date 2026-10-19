@@ -27,6 +27,7 @@ import {
   type FilaAnalitica,
 } from "@/lib/dominio/analitica";
 import { hashtagsDe, type PublicacionHashtag } from "@/lib/dominio/hashtags";
+import { type Mejores, type MetricaMejores, mejoresReels, type Reel } from "@/lib/dominio/mejores";
 import {
   construirInforme,
   type FilaInforme,
@@ -228,6 +229,85 @@ export async function publicacionesConHashtags(
 
     if (tanda.length < TANDA || salida.length >= 200_000) return salida;
   }
+}
+
+/**
+ * Los mejores reels de un cliente en el período, en Instagram y TikTok.
+ *
+ * Pide a la base solo los reels y videos del rango: el filtro por hashtag del
+ * cliente se hace después, porque un reel es del cliente si lleva su hashtag en
+ * cualquier lugar del texto y eso no se puede consultar con un igual.
+ */
+export async function mejoresDeCliente(
+  cliente: { nombre: string; hashtags: readonly string[] },
+  desde: string,
+  hasta: string,
+  metrica: MetricaMejores,
+): Promise<Mejores> {
+  const supabase = await supabaseServidor();
+  const indice = cuentasPorId(await listarCuentas());
+  const reels: Reel[] = [];
+
+  for (let inicio = 0; ; inicio += TANDA) {
+    const { data, error } = await supabase
+      .from("registros")
+      .select(
+        "id, fecha, cuenta_id, categoria, hashtag, titulo_contenido, enlace, visualizaciones, alcance, interacciones, me_gusta, comentarios, compartidos, guardados",
+      )
+      .gte("fecha", desde)
+      .lte("fecha", hasta)
+      .in("categoria", ["Reel", "Video"])
+      .order("fecha", { ascending: true })
+      .order("id", { ascending: true })
+      .range(inicio, inicio + TANDA - 1);
+
+    if (error) throw new Error(`No pude leer los reels: ${error.message}`);
+
+    const tanda = (data ?? []) as unknown as Pick<
+      RegistroRow,
+      | "id"
+      | "fecha"
+      | "cuenta_id"
+      | "categoria"
+      | "hashtag"
+      | "titulo_contenido"
+      | "enlace"
+      | "visualizaciones"
+      | "alcance"
+      | "interacciones"
+      | "me_gusta"
+      | "comentarios"
+      | "compartidos"
+      | "guardados"
+    >[];
+
+    for (const r of tanda) {
+      const cuenta = indice.get(r.cuenta_id);
+      if (!cuenta) continue;
+      reels.push({
+        id: r.id,
+        fecha: r.fecha,
+        cuentaId: cuenta.id,
+        cuenta: cuenta.nombre,
+        red: cuenta.red,
+        categoria: r.categoria,
+        hashtags: hashtagsDe(r.hashtag, r.titulo_contenido),
+        titulo: r.titulo_contenido,
+        enlace: r.enlace,
+        visualizaciones: r.visualizaciones,
+        alcance: r.alcance,
+        interacciones: r.interacciones,
+        me_gusta: r.me_gusta,
+        comentarios: r.comentarios,
+        compartidos: r.compartidos,
+        guardados: r.guardados,
+      });
+    }
+
+    if (tanda.length < TANDA || reels.length >= 200_000) break;
+  }
+
+  return mejoresReels(reels, cliente, { desde, hasta }, metrica);
 }
 
 /* ------------------------------------------------------------------ */

@@ -9,13 +9,20 @@ import { VistaPreviaReporte } from "@/componentes/VistaPreviaReporte";
 import { Cifra, Insignia, Nota, Pct, Vacio } from "@/componentes/ui";
 import { parsearDestinatarios } from "@/lib/correo/direcciones";
 import { faltantesSMTP } from "@/lib/correo/entorno";
-import { informeDeCliente, listarClientes } from "@/lib/datos/consultas";
+import { informeDeCliente, listarClientes, mejoresDeCliente } from "@/lib/datos/consultas";
 import { fechaCorta, hoyISO, mesLargo } from "@/lib/dominio/formato";
 import {
   construirReporteCliente,
   htmlCliente,
   textoCliente,
 } from "@/lib/reporte/cliente";
+import {
+  CUANTOS_MEJORES,
+  esMetricaMejores,
+  METRICAS_MEJORES,
+  NOMBRE_METRICA_MEJORES,
+} from "@/lib/dominio/mejores";
+import { htmlMejores, textoMejores } from "@/lib/reporte/mejores";
 import { urlPublica } from "@/lib/supabase/entorno";
 
 export const metadata = { title: "Informes por cliente · KPIs DLT" };
@@ -54,9 +61,19 @@ export default async function PaginaInforme(props: PageProps<"/informe">) {
   const desde = fecha(sp.desde) ?? `${hoy.slice(0, 4)}-01-01`;
   const hasta = fecha(sp.hasta) ?? hoy;
 
-  const resultado = cliente
-    ? await informeDeCliente(cliente, desde, hasta)
-    : null;
+  /*
+   * Dos informes con los mismos filtros: el completo (promedios por serie y
+   * cuenta) y el de los mejores reels (las publicaciones una por una). Solo se
+   * calcula el que se pidió.
+   */
+  const tipo = texto(sp.tipo) === "reels" ? "reels" : "completo";
+  const metricaPedida = texto(sp.metrica);
+  const metrica = esMetricaMejores(metricaPedida) ? metricaPedida : "visualizaciones";
+
+  const resultado =
+    cliente && tipo === "completo" ? await informeDeCliente(cliente, desde, hasta) : null;
+  const mejores =
+    cliente && tipo === "reels" ? await mejoresDeCliente(cliente, desde, hasta, metrica) : null;
 
   const reporte = resultado
     ? construirReporteCliente(resultado.informe, resultado.base?.mes ?? null)
@@ -145,10 +162,97 @@ export default async function PaginaInforme(props: PageProps<"/informe">) {
                 className="campo"
               />
             </div>
+            <div className="space-y-1">
+              <label className="etiqueta" htmlFor="tipo">
+                Informe
+              </label>
+              <select id="tipo" name="tipo" defaultValue={tipo} className="campo">
+                <option value="completo">Completo (promedios por serie y cuenta)</option>
+                <option value="reels">Los {CUANTOS_MEJORES} mejores reels</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="etiqueta" htmlFor="metrica">
+                Reels ordenados por
+              </label>
+              <select id="metrica" name="metrica" defaultValue={metrica} className="campo">
+                {METRICAS_MEJORES.map((m) => (
+                  <option key={m} value={m}>
+                    {NOMBRE_METRICA_MEJORES[m].charAt(0).toUpperCase() + NOMBRE_METRICA_MEJORES[m].slice(1)}
+                  </option>
+                ))}
+              </select>
+            </div>
             <button type="submit" className="boton-suave">
               Generar informe
             </button>
           </form>
+
+          {mejores && cliente && (
+            <>
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h2 className="text-base font-semibold tracking-tight">
+                  Los {CUANTOS_MEJORES} mejores reels de {cliente.nombre} · {fechaCorta(desde)} al{" "}
+                  {fechaCorta(hasta)}
+                </h2>
+                <span className="text-xs text-[var(--color-tinta-tenue)]">
+                  Ordenados por {NOMBRE_METRICA_MEJORES[metrica]}
+                </span>
+              </div>
+
+              {!mejores.hayDatos ? (
+                <Vacio
+                  titulo={`No hay reels de ${cliente.nombre} en ese período.`}
+                  detalle={
+                    cliente.hashtags.length === 0
+                      ? "El cliente no tiene ningún hashtag configurado."
+                      : `Se buscaron reels de Instagram y videos de TikTok con ${cliente.hashtags
+                          .map((h) => `#${h}`)
+                          .join(", ")}. Revisa que estén cargados en el registro o amplía el período.`
+                  }
+                  accion={
+                    <Link href="/clientes" className="boton-suave mt-1">
+                      Revisar sus hashtags
+                    </Link>
+                  }
+                />
+              ) : (
+                <section className="space-y-3">
+                  <section className="tarjeta flex flex-wrap items-center gap-x-6 gap-y-2 p-4 text-sm">
+                    {mejores.redes.map((d) => (
+                      <Dato
+                        key={d.red}
+                        valor={d.total}
+                        de={`${d.red === "Instagram" ? "reels en Instagram" : "videos en TikTok"}`}
+                      />
+                    ))}
+                    <span className="text-[11px] text-[var(--color-tinta-tenue)]">
+                      Una colaboración publicada en dos cuentas cuenta una sola vez.
+                    </span>
+                  </section>
+                  <VistaPreviaReporte
+                    html={htmlMejores(mejores, { urlBase: urlPublica() })}
+                    texto={textoMejores(mejores)}
+                    nombreArchivo={`mejores-reels-${cliente.nombre
+                      .toLowerCase()
+                      .replace(/[^a-z0-9]+/g, "-")
+                      .replace(/^-|-$/g, "")}-${desde}-a-${hasta}`}
+                    titulo={`Mejores reels de ${cliente.nombre} para enviar`}
+                  />
+                  <EnviarInforme
+                    cliente={cliente.id}
+                    nombreCliente={cliente.nombre}
+                    desde={desde}
+                    hasta={hasta}
+                    porDefecto={destinatarios}
+                    faltantes={faltantes}
+                    tipo="reels"
+                    metrica={metrica}
+                  />
+                </section>
+              )}
+            </>
+          )}
 
           {resultado && cliente && (
             <>
