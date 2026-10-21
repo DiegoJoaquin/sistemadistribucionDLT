@@ -64,8 +64,23 @@ describe("htmlMejores", () => {
 
 describe("titularDe", () => {
   it("saca el prefijo de la serie y corta los largos", () => {
-    expect(titularDe(reel({ titulo: "🛋️#ELLIVINGDELTEAMCHILE | AFRONTANDO LA PRESIÓN 😔" }))).toBe("AFRONTANDO LA PRESIÓN 😔");
-    expect(titularDe(reel({ titulo: "x".repeat(200) })).length).toBeLessThanOrEqual(89);
+    expect(titularDe(reel({ titulo: "🛋️#ELLIVINGDELTEAMCHILE | AFRONTANDO LA PRESIÓN 😔" }))).toBe("AFRONTANDO LA PRESIÓN");
+    expect(titularDe(reel({ titulo: "x".repeat(200) })).length).toBeLessThanOrEqual(79);
     expect(titularDe(reel({ titulo: null }))).toBe("Ver publicación");
+  });
+
+  it("en TikTok corta el arranque en mayúsculas en el primer emoji", () => {
+    expect(titularDe(reel({ titulo: "ESTAMOS MUY ABUELOS👴🏻 En el último capítulo de “El Living” tuvimos a dos promesas" }))).toBe(
+      "ESTAMOS MUY ABUELOS",
+    );
+    expect(titularDe(reel({ titulo: "😍 FINALMENTE ALGUIEN DE DLT HIZO ALGO. “Conquistamos” a la gran Ini Cifuentes 🤺 para que" }))).toBe(
+      "FINALMENTE ALGUIEN DE DLT HIZO ALGO.",
+    );
+  });
+
+  it("no deja letras sueltas de las banderas", () => {
+    expect(titularDe(reel({ titulo: "#ELLIVINGDELTEAMCHILE | ASÍ VIVEN EL VOLEIBOL EN EL EXTRANJERO🇵🇪🔥🇪🇸" }))).toBe(
+      "ASÍ VIVEN EL VOLEIBOL EN EL EXTRANJERO",
+    );
   });
 });

@@ -18,12 +18,31 @@ import { envoltura, esc, H2, type OpcionesCorreo, TH } from "./correo-base";
 
 const cifra = (v: number | null) => (v === null ? `<span class="g">—</span>` : numero(v));
 
-/** Un titular legible: la primera línea del caption, sin el prefijo de la serie. */
+// Emojis, banderas (pares de letras regionales) y los modificadores que los acompañan.
+const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}\u{1F3FB}-\u{1F3FF}\u{20E3}]/u;
+const EMOJIS = new RegExp(EMOJI.source, "gu");
+
+/**
+ * Un titular legible a partir del caption.
+ *
+ * En Instagram el titular es la primera línea; en TikTok el caption viene sin
+ * saltos y el «titular» es el arranque en mayúsculas que termina en el primer
+ * emoji («ESTAMOS MUY ABUELOS👴🏻 En el último capítulo…»). Así que: se saca el
+ * prefijo de la serie (#SERIE |), se corta en el primer emoji o fin de oración
+ * y se quitan los emojis que queden, que en una tabla impresa se ven como
+ * cuadritos o letras sueltas.
+ */
 export function titularDe(r: Reel): string {
   if (!r.titulo) return "Ver publicación";
-  const sinSerie = r.titulo.replace(/^[^|]*#[^|]*\|\s*/u, "").trim();
-  const texto = sinSerie || r.titulo;
-  return texto.length > 90 ? `${texto.slice(0, 88).trimEnd()}…` : texto;
+  let t = r.titulo.split("\n")[0].replace(/^[^|]*#[^|]*\|\s*/u, "");
+  t = t.replace(new RegExp(`^(?:${EMOJI.source}|\\s)+`, "u"), "");
+  const hastaEmoji = t.match(new RegExp(`^(.{10,}?)\\s*${EMOJI.source}`, "u"));
+  if (hastaEmoji) t = hastaEmoji[1];
+  const oracion = t.match(/^(.{10,}?[.!?…])\s/u);
+  if (oracion) t = oracion[1];
+  t = t.replace(EMOJIS, "").replace(/\s+/g, " ").trim();
+  if (t === "") return "Ver publicación";
+  return t.length > 80 ? `${t.slice(0, 78).trimEnd()}…` : t;
 }
 
 function fila(r: Reel, i: number, metrica: Mejores["metrica"]): string {
