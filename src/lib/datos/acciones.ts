@@ -110,6 +110,8 @@ function revalidarVistasDeRegistros(): void {
   revalidatePath("/perfil");
   revalidatePath("/reporte");
   revalidatePath("/reporte/diario");
+  // Lo que se importa entra al conteo de marcas en el momento.
+  revalidatePath("/marcas");
 }
 
 /**
@@ -660,7 +662,7 @@ export async function importarPublicaciones(
     const { data, error } = await supabase
       .from("registros")
       .select(
-        "id, id_externo, categoria, tipo, hashtag, alcance, visualizaciones, interacciones, me_gusta, comentarios, compartidos, guardados, favoritos, duracion_s, nuevos_seguidores, titulo_contenido, enlace",
+        "id, id_externo, categoria, tipo, hashtag, alcance, visualizaciones, interacciones, me_gusta, comentarios, compartidos, guardados, favoritos, duracion_s, nuevos_seguidores, titulo_contenido, texto, campanas, enlace",
       )
       .eq("cuenta_id", cuenta.id)
       .in("id_externo", ids.slice(i, i + 200));

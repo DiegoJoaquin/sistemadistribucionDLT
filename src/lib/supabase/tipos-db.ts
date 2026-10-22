@@ -38,6 +38,10 @@ export interface RegistroRow {
   tipo: Categoria | null;
   /** Serie o hashtag, normalizado. Es el corte del reporte semanal. */
   hashtag: string | null;
+  /** Caption completo (el global de marcas lo lee). Null en lo cargado antes. */
+  texto?: string | null;
+  /** Campañas y etiquetas de Iconosquare, separadas por coma. */
+  campanas?: string | null;
   /** Hora que muestra la plataforma, sin zona. Solo en lo importado. */
   publicado_en: string | null;
   /** Identificador en la plataforma: evita importar dos veces lo mismo. */

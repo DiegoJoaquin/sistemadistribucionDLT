@@ -44,6 +44,11 @@ export interface PublicacionImportada {
   enlace: string | null;
   id_externo: string | null;
   fuente: FuenteImport;
+  /**
+   * Campañas y etiquetas con que Iconosquare marca la publicación, separadas
+   * por coma. Las usa el global de marcas. Opcional: Meta y YouTube no las traen.
+   */
+  campanas?: string | null;
 }
 
 export interface ResultadoImport {

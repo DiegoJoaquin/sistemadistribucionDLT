@@ -8,6 +8,7 @@ import {
   limpiarTexto,
   rangoDe,
   recortarPorGrafemas,
+  textoDeCaption,
   tituloDeCaption,
 } from "./a-registro";
 import { resolverCuenta, usuarioComparable } from "./cuentas";
@@ -186,6 +187,33 @@ describe("tituloDeCaption", () => {
   });
 });
 
+describe("textoDeCaption", () => {
+  it("guarda el caption entero, con sus saltos de línea", () => {
+    const largo = `#ElLivingDelTeamChile | CAPÍTULO NUEVO
+
+${"Texto largo. ".repeat(40)}
+
+#SPARTA @spartachile`;
+    const t = textoDeCaption(largo)!;
+    expect(t).toContain("@spartachile");
+    expect(t).toContain("\n");
+    // El título, en cambio, se corta antes de la arroba del final.
+    expect(tituloDeCaption(largo)).not.toContain("@spartachile");
+  });
+
+  it("vacío o solo espacios es null", () => {
+    expect(textoDeCaption(null)).toBeNull();
+    expect(textoDeCaption("   \n ")).toBeNull();
+  });
+
+  it("aFilaRegistro lleva el texto y las campañas a la fila", () => {
+    const f = aFilaRegistro(pub({ caption: "Hola @crocschile", campanas: "SPARTA GLOBAL, el living" }), cuenta())!;
+    expect(f.texto).toBe("Hola @crocschile");
+    expect(f.campanas).toBe("SPARTA GLOBAL, el living");
+    expect(aFilaRegistro(pub(), cuenta())!.campanas).toBeNull();
+  });
+});
+
 describe("limpiarTexto", () => {
   it("no toca un texto normal", () => {
     expect(limpiarTexto("Hola, ¿qué tal? 🇨🇱 100%")).toBe("Hola, ¿qué tal? 🇨🇱 100%");
@@ -246,6 +274,18 @@ describe("aFilasRegistro", () => {
     expect(r.filas).toHaveLength(2);
     expect(r.fueraDeRango).toBe(0);
     expect(rangoDe(r.filas)).toEqual({ desde: "2026-07-01", hasta: "2026-09-30" });
+  });
+});
+
+describe("fusionarConExistente: texto y campañas", () => {
+  it("reimportar completa el texto que faltaba y no lo borra si la nueva no lo trae", () => {
+    const nueva = aFilaRegistro(pub({ caption: "Con @spartachile" }), cuenta())!;
+    expect(fusionarConExistente({ texto: null }, nueva).texto).toBe("Con @spartachile");
+    const sinTexto = { ...nueva, texto: null, campanas: null };
+    expect(fusionarConExistente({ texto: "viejo", campanas: "WRC" }, sinTexto)).toMatchObject({
+      texto: "viejo",
+      campanas: "WRC",
+    });
   });
 });
 

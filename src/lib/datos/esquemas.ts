@@ -209,6 +209,20 @@ export const esquemaCliente = z.object({
     .transform((v) => v === "on" || v === "true" || v === true),
 });
 
+/** Una marca del global: nombre, notas y si se cuenta. Las señales van aparte. */
+export const esquemaMarca = z.object({
+  nombre: z
+    .string({ message: "Escribe el nombre de la marca." })
+    .trim()
+    .min(2, "El nombre es demasiado corto.")
+    .max(80, "El nombre es demasiado largo."),
+  notas: textoOpcional(1000),
+  activa: z
+    .union([z.literal("on"), z.literal("true"), z.boolean()])
+    .optional()
+    .transform((v) => v === "on" || v === "true" || v === true),
+});
+
 /**
  * La lista de hashtags de un cliente, como texto libre.
  *

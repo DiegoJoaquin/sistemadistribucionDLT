@@ -96,6 +96,8 @@ export const esquemaPublicacion = z.object({
   enlace: textoNulable(2_000),
   id_externo: textoNulable(500),
   fuente: z.enum(FUENTES_IMPORT),
+  // Ausente en lo que mandaba una pestaña con la versión anterior: queda null.
+  campanas: textoNulable(1_000),
 });
 
 /**

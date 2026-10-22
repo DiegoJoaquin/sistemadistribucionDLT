@@ -118,6 +118,7 @@ export function leerMetaCSV(contenido: string): ResultadoImport {
       enlace: texto(col.valor(f, ...META.enlace)),
       id_externo: texto(col.valor(f, ...META.id)),
       fuente: "meta",
+      campanas: null, // Meta no etiqueta campañas
     });
   }
 
@@ -177,6 +178,30 @@ function leerXLSXFila4(buffer: ArrayBuffer): CabeceraXLSX {
   return { perfil, red, filas };
 }
 
+/**
+ * El valor de la primera columna que exista entre sus nombres posibles.
+ *
+ * Iconosquare exporta en el idioma de quien descarga: el mismo archivo trae
+ * "Caption" o "Leyenda", "Date and time" o "Fecha y hora". Sin esto, una
+ * exportación en castellano se leía como si no tuviera ninguna publicación.
+ */
+function campo(f: Fila, ...claves: string[]): unknown {
+  for (const c of claves) if (f[c] !== undefined && f[c] !== null) return f[c];
+  return null;
+}
+
+/**
+ * Las campañas y etiquetas con que Iconosquare marca una publicación, juntas
+ * y separadas por coma. Son señales del global de marcas: "SPARTA GLOBAL",
+ * "WRC | COPEC".
+ */
+function campanasDe(f: Fila): string | null {
+  const partes = [campo(f, "Campaigns", "Campañas"), campo(f, "Tags", "Etiquetas")]
+    .map((v) => texto(v))
+    .filter((v): v is string => v !== null);
+  return partes.length > 0 ? partes.join(", ") : null;
+}
+
 function detectarRed(red: string | null): "instagram" | "tiktok" | "youtube" | null {
   const r = (red ?? "").toLowerCase();
   if (r.includes("instagram")) return "instagram";
@@ -190,9 +215,12 @@ function detectarRed(red: string | null): "instagram" | "tiktok" | "youtube" | n
 const FORMATO_ICONOSQUARE: Record<string, Categoria> = {
   photo: "Imagen",
   image: "Imagen",
+  foto: "Imagen",
+  imagen: "Imagen",
   reel: "Reel",
   video: "Reel",
   carousel: "Carrusel",
+  carrusel: "Carrusel",
 };
 
 function leerInstagramXLSX(cab: CabeceraXLSX): ResultadoImport {
@@ -204,28 +232,31 @@ function leerInstagramXLSX(cab: CabeceraXLSX): ResultadoImport {
   }
   const publicaciones: PublicacionImportada[] = [];
   for (const f of cab.filas) {
-    const publicado_en = fechaDeCelda(f["Date"], "DMY");
+    const publicado_en = fechaDeCelda(campo(f, "Date", "Fecha"), "DMY");
     if (!publicado_en) continue;
 
-    const caption = texto(f["Caption"]);
+    const caption = texto(campo(f, "Caption", "Leyenda"));
     const clas = clasificarSiSePuede(cuenta, caption);
 
-    const me_gusta = num(f["Likes"]);
-    const comentarios = num(f["Comments"]);
-    const guardados = num(f["Saves"]);
-    const compartidos = num(f["Shares"]);
+    const me_gusta = num(campo(f, "Likes", "Me gusta"));
+    const comentarios = num(campo(f, "Comments", "Comentarios"));
+    const guardados = num(campo(f, "Saves", "Guardados"));
+    const compartidos = num(campo(f, "Shares", "Compartidos"));
+    const url = texto(campo(f, "Instagram URL", "URL de Instagram"));
 
     publicaciones.push({
       publicado_en,
       formato:
-        FORMATO_ICONOSQUARE[String(f["Type"] ?? "").trim().toLowerCase()] ?? null,
+        FORMATO_ICONOSQUARE[String(campo(f, "Type", "Tipo") ?? "").trim().toLowerCase()] ?? null,
       tipo: clas?.tipo ?? null,
       tipo_auto: clas?.tipo ?? null,
       serie_hashtag: clas?.serie ?? primerHashtag(caption),
       caption,
       duracion_s: null, // esta exportación no trae duración
-      visualizaciones: num(f["Total Views / Impressions"]),
-      alcance: num(f["Reach"]),
+      visualizaciones: num(
+        campo(f, "Total Views / Impressions", "Visualizaciones / impresiones totales"),
+      ),
+      alcance: num(campo(f, "Reach", "Alcance")),
       me_gusta,
       comentarios,
       compartidos,
@@ -233,11 +264,12 @@ function leerInstagramXLSX(cab: CabeceraXLSX): ResultadoImport {
       favoritos: null,
       nuevos_seguidores: null, // esta exportación no trae seguidores nuevos
       interacciones:
-        num(f["Post engagement"]) ??
+        num(campo(f, "Post engagement", "Interacción de la publicación")) ??
         sumaOpcional(me_gusta, comentarios, compartidos, guardados),
-      enlace: texto(f["Instagram URL"]),
-      id_externo: texto(f["Instagram URL"]),
+      enlace: url,
+      id_externo: url,
       fuente: "iconosquare",
+      campanas: campanasDe(f),
     });
   }
 
@@ -258,14 +290,15 @@ function leerInstagramXLSX(cab: CabeceraXLSX): ResultadoImport {
 function leerTikTokXLSX(cab: CabeceraXLSX): ResultadoImport {
   const publicaciones: PublicacionImportada[] = [];
   for (const f of cab.filas) {
-    const publicado_en = fechaDeCelda(f["Date and time"], "DMY");
+    const publicado_en = fechaDeCelda(campo(f, "Date and time", "Fecha y hora"), "DMY");
     if (!publicado_en) continue;
 
-    const me_gusta = num(f["Likes"]);
-    const comentarios = num(f["Comments"]);
-    const favoritos = num(f["Favorites"]);
-    const compartidos = num(f["Shares"]);
-    const caption = texto(f["Caption"]);
+    const me_gusta = num(campo(f, "Likes", "Me gusta"));
+    const comentarios = num(campo(f, "Comments", "Comentarios"));
+    const favoritos = num(campo(f, "Favorites", "Favoritos"));
+    const compartidos = num(campo(f, "Shares", "Compartidos"));
+    const caption = texto(campo(f, "Caption", "Leyenda"));
+    const url = texto(campo(f, "Tiktok video URL", "URL del video de TikTok"));
 
     publicaciones.push({
       publicado_en,
@@ -276,9 +309,9 @@ function leerTikTokXLSX(cab: CabeceraXLSX): ResultadoImport {
       // El hashtag sí: es el corte del catastro semanal y existe en toda red.
       serie_hashtag: primerHashtag(caption),
       caption,
-      duracion_s: num(f["Video duration (seconds)"]),
-      visualizaciones: num(f["Video Views"]),
-      alcance: num(f["Reach"]),
+      duracion_s: num(campo(f, "Video duration (seconds)", "Duración del video (segundos)")),
+      visualizaciones: num(campo(f, "Video Views", "Visualizaciones de video")),
+      alcance: num(campo(f, "Reach", "Alcance")),
       me_gusta,
       comentarios,
       compartidos,
@@ -286,9 +319,10 @@ function leerTikTokXLSX(cab: CabeceraXLSX): ResultadoImport {
       favoritos,
       nuevos_seguidores: null,
       interacciones: sumaOpcional(me_gusta, comentarios, favoritos, compartidos),
-      enlace: texto(f["Tiktok video URL"]),
-      id_externo: texto(f["Tiktok video URL"]),
+      enlace: url,
+      id_externo: url,
       fuente: "tiktok",
+      campanas: campanasDe(f),
     });
   }
 
@@ -344,6 +378,7 @@ function leerYouTubeXLSX(cab: CabeceraXLSX): ResultadoImport {
       enlace: texto(f["Youtube video URL"]),
       id_externo: texto(f["Youtube video URL"]),
       fuente: "youtube",
+      campanas: null,
     });
   }
 

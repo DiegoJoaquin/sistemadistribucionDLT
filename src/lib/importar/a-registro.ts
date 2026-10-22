@@ -51,6 +51,10 @@ export interface FilaRegistroImportada {
   duracion_s: number | null;
   nuevos_seguidores: number | null;
   titulo_contenido: string | null;
+  /** El caption entero, con sus saltos de línea: lo lee el global de marcas. */
+  texto: string | null;
+  /** Campañas y etiquetas de Iconosquare, separadas por coma. */
+  campanas: string | null;
   enlace: string | null;
   publicado_en: string;
   id_externo: string | null;
@@ -65,6 +69,12 @@ export const CAMPOS_SOLO_A_MANO = [
 ] as const;
 
 const LARGO_TITULO = 300;
+/*
+ * El texto completo también tiene tope, pero muy por encima de cualquier
+ * caption real (Instagram corta en 2.200 caracteres): es solo para que un
+ * archivo corrupto no meta un megabyte en una celda.
+ */
+const LARGO_TEXTO = 5_000;
 
 /**
  * Quita lo que no puede viajar en el cuerpo JSON de la petición.
@@ -139,6 +149,20 @@ export function tituloDeCaption(caption: string | null): string | null {
   return recortarPorGrafemas(plano, LARGO_TITULO);
 }
 
+/**
+ * El caption completo, limpio pero con sus saltos de línea.
+ *
+ * El título de 300 caracteres sirve para reconocer la publicación, no para
+ * buscar en ella: las marcas suelen ir al final ("... #SPARTA @spartachile") y
+ * con el recorte se perdían. Esto es lo que lee el global de marcas.
+ */
+export function textoDeCaption(caption: string | null): string | null {
+  if (!caption) return null;
+  const limpio = limpiarTexto(caption).trim();
+  if (limpio === "") return null;
+  return recortarPorGrafemas(limpio, LARGO_TEXTO);
+}
+
 function enlaceValido(enlace: string | null): string | null {
   if (!enlace) return null;
   const limpio = limpiarTexto(enlace);
@@ -193,6 +217,8 @@ export function aFilaRegistro(
     duracion_s: p.duracion_s,
     nuevos_seguidores: p.nuevos_seguidores,
     titulo_contenido: tituloDeCaption(p.caption),
+    texto: textoDeCaption(p.caption),
+    campanas: p.campanas ? limpiarTexto(p.campanas).trim() || null : null,
     enlace: enlaceValido(p.enlace),
     publicado_en: p.publicado_en,
     // También se limpia: es parte de la clave única, y un caracter inválido
@@ -297,6 +323,8 @@ export function fusionarConExistente(
     duracion_s: mantener(nueva.duracion_s, existente.duracion_s),
     nuevos_seguidores: mantener(nueva.nuevos_seguidores, existente.nuevos_seguidores),
     titulo_contenido: mantener(nueva.titulo_contenido, existente.titulo_contenido),
+    texto: mantener(nueva.texto, existente.texto),
+    campanas: mantener(nueva.campanas, existente.campanas),
     enlace: mantener(nueva.enlace, existente.enlace),
   };
 }

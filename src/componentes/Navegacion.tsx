@@ -17,6 +17,7 @@ const ENLACES = [
   { href: "/informe", texto: "Informes" },
   { href: "/cuentas", texto: "Cuentas" },
   { href: "/clientes", texto: "Clientes" },
+  { href: "/marcas", texto: "Global de marcas" },
 ] as const;
 
 export function Navegacion() {
