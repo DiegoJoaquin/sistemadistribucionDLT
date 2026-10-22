@@ -8,7 +8,14 @@ import "server-only";
  * en enero, y lo que se sube cada semana entra al conteo apenas se importa.
  */
 
-import { type Marca, type PublicacionMarca, type Senal, senalesDe, type TipoSenal } from "@/lib/dominio/marcas";
+import {
+  type Marca,
+  type PiezaManual,
+  type PublicacionMarca,
+  type Senal,
+  senalesDe,
+  type TipoSenal,
+} from "@/lib/dominio/marcas";
 import { supabaseServidor } from "@/lib/supabase/servidor";
 import type { CuentaRow } from "@/lib/supabase/tipos-db";
 
@@ -109,4 +116,50 @@ export async function publicacionesConMarcas(
 
     if (tanda.length < TANDA || salida.length >= 200_000) return salida;
   }
+}
+
+interface FilaManual {
+  id: string;
+  marca_id: string;
+  fecha: string;
+  cuenta_id: string | null;
+  formato: string | null;
+  descripcion: string;
+  enlace: string | null;
+  cantidad: number;
+}
+
+/** Las piezas cargadas a mano en el rango, con su cuenta resuelta. */
+export async function piezasManuales(
+  desde: string,
+  hasta: string,
+  indice: Map<string, CuentaRow>,
+): Promise<PiezaManual[]> {
+  const supabase = await supabaseServidor();
+  const { data, error } = await supabase
+    .from("marca_piezas_manuales")
+    .select("id, marca_id, fecha, cuenta_id, formato, descripcion, enlace, cantidad")
+    .gte("fecha", desde)
+    .lte("fecha", hasta)
+    .order("fecha", { ascending: true })
+    .limit(5_000);
+
+  if (error) throw new Error(`No pude leer las piezas cargadas a mano: ${error.message}`);
+
+  return ((data ?? []) as FilaManual[]).map((r) => {
+    const cuenta = r.cuenta_id ? indice.get(r.cuenta_id) : undefined;
+    return {
+      id: r.id,
+      marcaId: r.marca_id,
+      fecha: r.fecha,
+      cuentaId: cuenta?.id ?? null,
+      cuenta: cuenta?.nombre ?? null,
+      red: cuenta?.red ?? null,
+      esInfluencer: cuenta?.es_influencer ?? false,
+      formato: r.formato,
+      descripcion: r.descripcion,
+      enlace: r.enlace,
+      cantidad: r.cantidad,
+    };
+  });
 }

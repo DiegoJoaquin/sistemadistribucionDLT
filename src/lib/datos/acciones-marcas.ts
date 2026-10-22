@@ -9,7 +9,7 @@
  */
 
 import { revalidatePath } from "next/cache";
-import { desdeFormData, esquemaMarca, primerError } from "./esquemas";
+import { desdeFormData, esquemaMarca, esquemaPiezaManual, primerError } from "./esquemas";
 import { parsearSenales, type Senal } from "@/lib/dominio/marcas";
 import { exigirSesion, supabaseServidor } from "@/lib/supabase/servidor";
 
@@ -59,7 +59,7 @@ export async function crearMarca(_previo: ResultadoMarca | null, fd: FormData): 
     return { ok: false, mensaje: relaciones.error.message };
   }
 
-  revalidatePath("/marcas");
+  revalidatePath("/marcas", "layout");
   return {
     ok: true,
     mensaje: `Marca ${parseado.data.nombre} creada con ${senales.length} ${senales.length === 1 ? "señal" : "señales"}.`,
@@ -119,7 +119,7 @@ export async function actualizarMarca(_previo: ResultadoMarca | null, fd: FormDa
     if (eInsertar) return { ok: false, mensaje: eInsertar.message };
   }
 
-  revalidatePath("/marcas");
+  revalidatePath("/marcas", "layout");
 
   const cambios: string[] = [];
   if (nuevas.length > 0) cambios.push(`${nuevas.length} agregadas`);
@@ -149,7 +149,7 @@ export async function asignarArroba(fd: FormData): Promise<void> {
     .from("marca_senales")
     .upsert({ marca_id: marcaId, tipo: "mencion", valor: arroba }, { ignoreDuplicates: true });
 
-  revalidatePath("/marcas");
+  revalidatePath("/marcas", "layout");
 }
 
 /**
@@ -164,5 +164,55 @@ export async function alternarMarcaActiva(fd: FormData): Promise<void> {
 
   const supabase = await supabaseServidor();
   await supabase.from("marcas").update({ activa: activar }).eq("id", id);
-  revalidatePath("/marcas");
+  revalidatePath("/marcas", "layout");
+}
+
+/* ------------------------------------------------------------------ */
+/* Piezas cargadas a mano                                              */
+/* ------------------------------------------------------------------ */
+
+export interface ResultadoPieza {
+  ok: boolean;
+  mensaje?: string;
+}
+
+/**
+ * Suma a mano una pieza a una marca: una historia, un video sin hashtag, una
+ * acción en una cuenta que no está cargada. Queda firmada por quien la cargó.
+ */
+export async function crearPiezaManual(_previo: ResultadoPieza | null, fd: FormData): Promise<ResultadoPieza> {
+  const { usuarioId } = await exigirSesion();
+
+  const parseado = esquemaPiezaManual.safeParse(desdeFormData(fd));
+  if (!parseado.success) return { ok: false, mensaje: primerError(parseado.error) };
+  const d = parseado.data;
+
+  const supabase = await supabaseServidor();
+  const { error } = await supabase.from("marca_piezas_manuales").insert({
+    marca_id: d.marca_id,
+    fecha: d.fecha,
+    cuenta_id: d.cuenta_id,
+    formato: d.formato,
+    descripcion: d.descripcion,
+    enlace: d.enlace,
+    cantidad: d.cantidad,
+    created_by: usuarioId,
+  });
+  if (error) return { ok: false, mensaje: error.message };
+
+  revalidatePath("/marcas", "layout");
+  return {
+    ok: true,
+    mensaje: `Listo: se sumó ${d.cantidad === 1 ? "1 pieza" : `${d.cantidad} piezas`} del ${d.fecha.split("-").reverse().join("-")}.`,
+  };
+}
+
+/** Borra una pieza cargada a mano (las reconocidas solas no se borran: se corrige la señal). */
+export async function borrarPiezaManual(fd: FormData): Promise<void> {
+  await exigirSesion();
+  const id = String(fd.get("id") ?? "");
+  if (!id) return;
+  const supabase = await supabaseServidor();
+  await supabase.from("marca_piezas_manuales").delete().eq("id", id);
+  revalidatePath("/marcas", "layout");
 }

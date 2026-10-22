@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   arrobasSinMarca,
+  enlaceComparable,
   globalDeMarcas,
   type Marca,
   marcasDe,
   normalizarSenal,
   parsearSenales,
+  type PiezaManual,
   type PublicacionMarca,
   senalesComoTexto,
   senalesDe,
@@ -211,5 +213,79 @@ describe("arrobasSinMarca", () => {
       { arroba: "marcopolosnacks", publicaciones: 2, ultima: "2026-10-03" },
       { arroba: "eucerin.latam", publicaciones: 1, ultima: "2026-10-02" },
     ]);
+  });
+});
+
+describe("piezas cargadas a mano", () => {
+  const pubs = [
+    pub("1", "2026-10-05", "#ElLivingDelTeamChile capítulo nuevo", {
+      enlace: "https://www.tiktok.com/@dltsportsoficial/video/1?utm_campaign=tt4d",
+    }),
+  ];
+  const manual = (p: Partial<PiezaManual>): PiezaManual => ({
+    id: "m1",
+    marcaId: "crocs",
+    fecha: "2026-10-06",
+    cuentaId: "ig-dlt",
+    cuenta: "Instagram DLT",
+    red: "Instagram",
+    esInfluencer: false,
+    formato: "Historia",
+    descripcion: "Historias Crocs con Diegoat",
+    enlace: null,
+    cantidad: 4,
+    ...p,
+  });
+
+  it("se suman a su marca con su cantidad", () => {
+    const g = globalDeMarcas(pubs, [SPARTA, CROCS], "2026-10-05", "2026-10-18", "semana", [manual({})]);
+    const crocs = g.marcas.find((m) => m.marca.id === "crocs")!;
+    expect(crocs.n).toBe(4);
+    expect(crocs.manuales).toBe(4);
+    expect(crocs.porFormato).toEqual({ Historia: 4 });
+    expect(crocs.piezas[0]).toMatchObject({ manualId: "m1", cantidad: 4, por: [] });
+    expect(g.conMarca).toBe(5);
+    expect(g.manuales).toBe(4);
+    expect(g.porPeriodo).toEqual([5, 0]);
+  });
+
+  it("ordena las marcas por el total, contando las manuales", () => {
+    const g = globalDeMarcas(pubs, [SPARTA, CROCS], "2026-10-05", "2026-10-18", "semana", [manual({})]);
+    expect(g.marcas.map((m) => m.marca.id)).toEqual(["crocs", "sparta"]);
+  });
+
+  it("no cuenta dos veces una pieza manual con el enlace de una que ya se reconoció sola", () => {
+    const repetida = manual({
+      marcaId: "sparta",
+      cantidad: 1,
+      enlace: "https://www.tiktok.com/@dltsportsoficial/video/1/",
+    });
+    const g = globalDeMarcas(pubs, [SPARTA], "2026-10-05", "2026-10-18", "semana", [repetida]);
+    expect(g.marcas[0].n).toBe(1);
+    expect(g.manualesRepetidas).toBe(1);
+  });
+
+  it("deja afuera las que caen fuera del período o son de una marca inactiva", () => {
+    const g = globalDeMarcas(pubs, [SPARTA, CROCS, VIEJA], "2026-10-05", "2026-10-18", "semana", [
+      manual({ fecha: "2026-09-01" }),
+      manual({ id: "m2", marcaId: "vieja" }),
+    ]);
+    expect(g.manuales).toBe(0);
+  });
+
+  it("una pieza sin cuenta queda como «Sin cuenta» y no suma a ninguna red", () => {
+    const g = globalDeMarcas([], [CROCS], "2026-10-05", "2026-10-18", "semana", [
+      manual({ cuentaId: null, cuenta: null, red: null, cantidad: 2 }),
+    ]);
+    expect(g.marcas[0].porCuenta).toEqual([{ cuentaId: null, cuenta: "Sin cuenta", red: null, esInfluencer: false, n: 2 }]);
+    expect(g.marcas[0].porRed).toEqual({});
+  });
+});
+
+describe("enlaceComparable", () => {
+  it("quita parámetros, barra final y mayúsculas", () => {
+    expect(enlaceComparable("https://www.instagram.com/reel/AbC/?igsh=1")).toBe("https://www.instagram.com/reel/abc");
+    expect(enlaceComparable("  ")).toBeNull();
+    expect(enlaceComparable(null)).toBeNull();
   });
 });

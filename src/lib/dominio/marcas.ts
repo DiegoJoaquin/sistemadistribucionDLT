@@ -212,24 +212,56 @@ export interface PublicacionMarca {
   senales: SenalesPublicacion;
 }
 
+/** Los formatos que se pueden elegir al cargar una pieza de marca a mano. */
+export const FORMATOS_PIEZA_MANUAL = ["Reel", "Carrusel", "Imagen", "Historia", "Video", "Short", "Otro"] as const;
+
+/**
+ * Una pieza de marca cargada a mano: lo que el global no puede reconocer solo
+ * (historias, videos sin hashtag, cuentas que no están cargadas).
+ */
+export interface PiezaManual {
+  id: string;
+  marcaId: string;
+  /** "YYYY-MM-DD" */
+  fecha: string;
+  cuentaId: string | null;
+  cuenta: string | null;
+  red: Red | null;
+  esInfluencer: boolean;
+  formato: string | null;
+  descripcion: string;
+  enlace: string | null;
+  /** «4 historias» es una sola pieza manual con cantidad 4. */
+  cantidad: number;
+}
+
 export interface PiezaMarca {
   id: string;
   fecha: string;
-  cuentaId: string;
-  cuenta: string;
-  red: Red;
+  cuentaId: string | null;
+  cuenta: string | null;
+  red: Red | null;
   categoria: string | null;
   titulo: string | null;
   enlace: string | null;
+  /** Las señales que la reconocieron. Vacío en las cargadas a mano. */
   por: Senal[];
+  /** Cuántas piezas representa: 1, salvo en las manuales. */
+  cantidad: number;
+  /** El id de la carga manual, para poder borrarla. Null si se reconoció sola. */
+  manualId: string | null;
 }
 
 export interface ConteoMarca {
   marca: Marca;
+  /** Total de piezas: las reconocidas más las cargadas a mano (con su cantidad). */
+  n: number;
+  /** De ese total, cuántas se cargaron a mano. */
+  manuales: number;
   piezas: PiezaMarca[];
   porRed: Partial<Record<Red, number>>;
   porFormato: Record<string, number>;
-  porCuenta: { cuentaId: string; cuenta: string; red: Red; esInfluencer: boolean; n: number }[];
+  porCuenta: { cuentaId: string | null; cuenta: string; red: Red | null; esInfluencer: boolean; n: number }[];
   /** Mismo largo y orden que los períodos pedidos. */
   porPeriodo: number[];
   /** Cuántos de los períodos tuvieron al menos una pieza. */
@@ -247,16 +279,20 @@ export interface GlobalMarcas {
   marcas: ConteoMarca[];
   /** Publicaciones del rango, para poner el conteo en perspectiva. */
   publicaciones: number;
-  /** Publicaciones con al menos una marca: una pieza con dos marcas cuenta una vez. */
+  /** Piezas con al menos una marca: una pieza con dos marcas cuenta una vez. */
   conMarca: number;
+  /** De esas, cuántas se cargaron a mano. */
+  manuales: number;
   /** Publicaciones con dos marcas o más. */
   conVariasMarcas: number;
-  /** De las publicaciones con marca, cuántas salieron en cuentas de rostros. */
+  /** De las piezas con marca, cuántas salieron en cuentas de rostros. */
   conMarcaEnRostros: number;
-  /** Publicaciones con marca por período, sin contar dos veces las de dos marcas. */
+  /** Piezas con marca por período, sin contar dos veces las de dos marcas. */
   porPeriodo: number[];
   /** Publicaciones de las que solo se tiene el texto recortado. */
   sinTextoCompleto: number;
+  /** Cargas manuales que no se suman porque su enlace ya se reconoció solo. */
+  manualesRepetidas: number;
 }
 
 function indicePeriodo(periodos: readonly Periodo[], fecha: string): number {
@@ -264,8 +300,67 @@ function indicePeriodo(periodos: readonly Periodo[], fecha: string): number {
 }
 
 /**
+ * Un enlace comparable: sin parámetros ni barra final. Iconosquare agrega
+ * "?utm_campaign=..." a los de TikTok, y la misma publicación no puede contarse
+ * dos veces por eso.
+ */
+export function enlaceComparable(enlace: string | null): string | null {
+  if (!enlace) return null;
+  const v = enlace.trim().split(/[?#]/)[0].replace(/\/+$/, "").toLowerCase();
+  return v === "" ? null : v;
+}
+
+function nuevoConteo(m: Marca, periodos: readonly Periodo[]): ConteoMarca {
+  return {
+    marca: m,
+    n: 0,
+    manuales: 0,
+    piezas: [],
+    porRed: {},
+    porFormato: {},
+    porCuenta: [],
+    porPeriodo: periodos.map(() => 0),
+    periodosConPiezas: 0,
+    enCuentasDLT: 0,
+    enRostros: 0,
+    primera: null,
+    ultima: null,
+  };
+}
+
+/** Suma una pieza al conteo de su marca. */
+function sumar(c: ConteoMarca, pieza: PiezaMarca, esInfluencer: boolean, i: number): void {
+  const k = pieza.cantidad;
+  c.piezas.push(pieza);
+  c.n += k;
+  if (pieza.manualId) c.manuales += k;
+  if (pieza.red) c.porRed[pieza.red] = (c.porRed[pieza.red] ?? 0) + k;
+  const formato = pieza.categoria ?? "Sin formato";
+  c.porFormato[formato] = (c.porFormato[formato] ?? 0) + k;
+  const enCuenta = c.porCuenta.find((x) => x.cuentaId === pieza.cuentaId);
+  if (enCuenta) enCuenta.n += k;
+  else
+    c.porCuenta.push({
+      cuentaId: pieza.cuentaId,
+      cuenta: pieza.cuenta ?? "Sin cuenta",
+      red: pieza.red,
+      esInfluencer,
+      n: k,
+    });
+  if (i >= 0) c.porPeriodo[i] += k;
+  if (esInfluencer) c.enRostros += k;
+  else c.enCuentasDLT += k;
+  if (c.primera === null || pieza.fecha < c.primera) c.primera = pieza.fecha;
+  if (c.ultima === null || pieza.fecha > c.ultima) c.ultima = pieza.fecha;
+}
+
+/**
  * El global del rango: para cada marca, cuántas piezas, en qué red, con qué
  * formato, en qué cuentas y en qué semana o mes.
+ *
+ * Las piezas cargadas a mano se suman con su cantidad. Si una trae el enlace de
+ * una publicación que la marca ya reconoció sola, no se suma: sería contarla
+ * dos veces.
  */
 export function globalDeMarcas(
   pubs: readonly PublicacionMarca[],
@@ -273,31 +368,21 @@ export function globalDeMarcas(
   desde: string,
   hasta: string,
   granularidad: Granularidad,
+  manuales: readonly PiezaManual[] = [],
 ): GlobalMarcas {
   const periodos = periodosDelRango(desde, hasta, granularidad);
   const activas = marcas.filter((m) => m.activa);
-  const conteos = new Map<string, ConteoMarca>();
-  for (const m of activas) {
-    conteos.set(m.id, {
-      marca: m,
-      piezas: [],
-      porRed: {},
-      porFormato: {},
-      porCuenta: [],
-      porPeriodo: periodos.map(() => 0),
-      periodosConPiezas: 0,
-      enCuentasDLT: 0,
-      enRostros: 0,
-      primera: null,
-      ultima: null,
-    });
-  }
+  const conteos = new Map<string, ConteoMarca>(activas.map((m) => [m.id, nuevoConteo(m, periodos)]));
 
   let conMarca = 0;
+  let totalManuales = 0;
   let conVariasMarcas = 0;
   let conMarcaEnRostros = 0;
   let sinTextoCompleto = 0;
+  let manualesRepetidas = 0;
   const porPeriodo = periodos.map(() => 0);
+  // Por marca, los enlaces que ya se reconocieron solos.
+  const enlacesReconocidos = new Map<string, Set<string>>();
 
   const ordenadas = [...pubs].sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id.localeCompare(b.id));
   for (const p of ordenadas) {
@@ -310,51 +395,86 @@ export function globalDeMarcas(
     if (p.esInfluencer) conMarcaEnRostros += 1;
     const i = indicePeriodo(periodos, p.fecha);
     if (i >= 0) porPeriodo[i] += 1;
+    const enlace = enlaceComparable(p.enlace);
 
     for (const r of reconocidas) {
-      const c = conteos.get(r.marcaId)!;
-      c.piezas.push({
-        id: p.id,
-        fecha: p.fecha,
-        cuentaId: p.cuentaId,
-        cuenta: p.cuenta,
-        red: p.red,
-        categoria: p.categoria,
-        titulo: p.titulo,
-        enlace: p.enlace,
-        por: r.por,
-      });
-      c.porRed[p.red] = (c.porRed[p.red] ?? 0) + 1;
-      const formato = p.categoria ?? "Sin formato";
-      c.porFormato[formato] = (c.porFormato[formato] ?? 0) + 1;
-      const enCuenta = c.porCuenta.find((x) => x.cuentaId === p.cuentaId);
-      if (enCuenta) enCuenta.n += 1;
-      else c.porCuenta.push({ cuentaId: p.cuentaId, cuenta: p.cuenta, red: p.red, esInfluencer: p.esInfluencer, n: 1 });
-      if (i >= 0) c.porPeriodo[i] += 1;
-      if (p.esInfluencer) c.enRostros += 1;
-      else c.enCuentasDLT += 1;
-      c.primera ??= p.fecha;
-      c.ultima = p.fecha;
+      sumar(
+        conteos.get(r.marcaId)!,
+        {
+          id: p.id,
+          fecha: p.fecha,
+          cuentaId: p.cuentaId,
+          cuenta: p.cuenta,
+          red: p.red,
+          categoria: p.categoria,
+          titulo: p.titulo,
+          enlace: p.enlace,
+          por: r.por,
+          cantidad: 1,
+          manualId: null,
+        },
+        p.esInfluencer,
+        i,
+      );
+      if (enlace) {
+        const set = enlacesReconocidos.get(r.marcaId) ?? new Set<string>();
+        set.add(enlace);
+        enlacesReconocidos.set(r.marcaId, set);
+      }
     }
+  }
+
+  for (const m of [...manuales].sort((a, b) => a.fecha.localeCompare(b.fecha))) {
+    const c = conteos.get(m.marcaId);
+    if (!c || m.fecha < desde || m.fecha > hasta) continue;
+    const enlace = enlaceComparable(m.enlace);
+    if (enlace && enlacesReconocidos.get(m.marcaId)?.has(enlace)) {
+      manualesRepetidas += 1;
+      continue;
+    }
+    const i = indicePeriodo(periodos, m.fecha);
+    sumar(
+      c,
+      {
+        id: `manual-${m.id}`,
+        fecha: m.fecha,
+        cuentaId: m.cuentaId,
+        cuenta: m.cuenta,
+        red: m.red,
+        categoria: m.formato,
+        titulo: m.descripcion,
+        enlace: m.enlace,
+        por: [],
+        cantidad: m.cantidad,
+        manualId: m.id,
+      },
+      m.esInfluencer,
+      i,
+    );
+    conMarca += m.cantidad;
+    totalManuales += m.cantidad;
+    if (m.esInfluencer) conMarcaEnRostros += m.cantidad;
+    if (i >= 0) porPeriodo[i] += m.cantidad;
   }
 
   for (const c of conteos.values()) {
     c.periodosConPiezas = c.porPeriodo.filter((n) => n > 0).length;
     c.porCuenta.sort((a, b) => b.n - a.n || a.cuenta.localeCompare(b.cuenta, "es"));
+    c.piezas.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id.localeCompare(b.id));
   }
 
   return {
     periodos,
     granularidad,
-    marcas: [...conteos.values()].sort(
-      (a, b) => b.piezas.length - a.piezas.length || a.marca.nombre.localeCompare(b.marca.nombre, "es"),
-    ),
+    marcas: [...conteos.values()].sort((a, b) => b.n - a.n || a.marca.nombre.localeCompare(b.marca.nombre, "es")),
     publicaciones: pubs.length,
     conMarca,
+    manuales: totalManuales,
     conVariasMarcas,
     conMarcaEnRostros,
     porPeriodo,
     sinTextoCompleto,
+    manualesRepetidas,
   };
 }
 

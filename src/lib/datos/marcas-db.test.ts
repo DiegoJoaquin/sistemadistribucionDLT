@@ -112,6 +112,64 @@ describe("marcas", () => {
   });
 });
 
+describe("piezas cargadas a mano", () => {
+  it("se guardan con su cantidad y quien las cargó", async () => {
+    const id = await crearMarca("Crocs", [["mencion", "crocschile"]]);
+    await comoUsuario(DIEGO);
+    await db.query(
+      `insert into public.marca_piezas_manuales (marca_id, fecha, formato, descripcion, cantidad)
+       values ($1, '2026-10-06', 'Historia', 'Historias con Diegoat', 4)`,
+      [id],
+    );
+    const r = await db.query<{ cantidad: number; created_by: string }>(
+      `select cantidad, created_by from public.marca_piezas_manuales`,
+    );
+    expect(r.rows).toEqual([{ cantidad: 4, created_by: DIEGO }]);
+  });
+
+  it("nadie puede cargar una pieza a nombre de otro", async () => {
+    const id = await crearMarca("Crocs", [["mencion", "crocschile"]]);
+    await comoUsuario(DIEGO);
+    await expect(
+      db.query(
+        `insert into public.marca_piezas_manuales (marca_id, fecha, descripcion, created_by)
+         values ($1, '2026-10-06', 'Historia', $2)`,
+        [id, CATA],
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("no acepta cantidad cero ni descripción vacía", async () => {
+    const id = await crearMarca("Crocs", [["mencion", "crocschile"]]);
+    await comoUsuario(DIEGO);
+    await expect(
+      db.query(
+        `insert into public.marca_piezas_manuales (marca_id, fecha, descripcion, cantidad) values ($1, '2026-10-06', 'x', 0)`,
+        [id],
+      ),
+    ).rejects.toThrow();
+    await expect(
+      db.query(
+        `insert into public.marca_piezas_manuales (marca_id, fecha, descripcion) values ($1, '2026-10-06', '   ')`,
+        [id],
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("borrar la marca se lleva sus piezas manuales", async () => {
+    const id = await crearMarca("Crocs", [["mencion", "crocschile"]]);
+    await comoUsuario(DIEGO);
+    await db.query(
+      `insert into public.marca_piezas_manuales (marca_id, fecha, descripcion) values ($1, '2026-10-06', 'Historia')`,
+      [id],
+    );
+    await comoDueno();
+    await db.query(`delete from public.marcas where id = $1`, [id]);
+    const r = await db.query<{ n: string }>(`select count(*)::text as n from public.marca_piezas_manuales`);
+    expect(r.rows[0].n).toBe("0");
+  });
+});
+
 describe("con RLS activo", () => {
   it("el equipo lee y administra las marcas", async () => {
     await comoUsuario(DIEGO);

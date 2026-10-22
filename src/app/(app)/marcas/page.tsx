@@ -1,14 +1,15 @@
 import Link from "next/link";
 import { FormularioMarca } from "@/componentes/FormularioMarca";
+import { FormularioPiezaManual } from "@/componentes/FormularioPiezaManual";
 import { TablaMarcas } from "@/componentes/TablaMarcas";
 import { Nota, Vacio } from "@/componentes/ui";
 import { asignarArroba } from "@/lib/datos/acciones-marcas";
 import { cuentasPorId, listarCuentas } from "@/lib/datos/consultas";
-import { listarMarcas, publicacionesConMarcas } from "@/lib/datos/marcas";
+import { listarMarcas, piezasManuales, publicacionesConMarcas } from "@/lib/datos/marcas";
 import { fechaCorta, hoyISO, numero } from "@/lib/dominio/formato";
 import { type Granularidad, granularidadSugerida } from "@/lib/dominio/hashtags";
-import { arrobasSinMarca, type ConteoMarca, globalDeMarcas, rotularSenal } from "@/lib/dominio/marcas";
-import { REDES } from "@/lib/dominio/redes";
+import { arrobasSinMarca, globalDeMarcas } from "@/lib/dominio/marcas";
+import { ordenarCuentas, REDES } from "@/lib/dominio/redes";
 
 export const metadata = { title: "Global de marcas · KPIs DLT" };
 
@@ -34,8 +35,6 @@ function cero(n: number | undefined): string {
 
 /** Cuántas arrobas sin marca se muestran: más allá son menciones sueltas. */
 const TOPE_ARROBAS = 60;
-/** Cuántas piezas se listan en el detalle de una marca. */
-const TOPE_PIEZAS = 400;
 
 export default async function PaginaMarcas(props: PageProps<"/marcas">) {
   const sp = await props.searchParams;
@@ -48,24 +47,28 @@ export default async function PaginaMarcas(props: PageProps<"/marcas">) {
   const por: Granularidad = porPedido === "semana" || porPedido === "mes" ? porPedido : granularidadSugerida(desde, hasta);
 
   const [marcas, cuentas] = await Promise.all([listarMarcas(), listarCuentas()]);
-  const pubs = await publicacionesConMarcas(desde, hasta, cuentasPorId(cuentas));
+  const indice = cuentasPorId(cuentas);
+  const [pubs, manuales] = await Promise.all([
+    publicacionesConMarcas(desde, hasta, indice),
+    piezasManuales(desde, hasta, indice),
+  ]);
 
-  const g = globalDeMarcas(pubs, marcas, desde, hasta, por);
+  const g = globalDeMarcas(pubs, marcas, desde, hasta, por, manuales);
   const sinMarca = arrobasSinMarca(
     pubs,
     marcas,
     cuentas.map((c) => c.usuario ?? "").filter(Boolean),
   ).slice(0, TOPE_ARROBAS);
-  const conPiezas = g.marcas.filter((m) => m.piezas.length > 0);
+  const conPiezas = g.marcas.filter((m) => m.n > 0);
   const redesConPiezas = REDES.filter((r) => g.marcas.some((m) => (m.porRed[r] ?? 0) > 0));
 
-  const elegida: ConteoMarca | undefined = g.marcas.find((m) => m.marca.id === uno(sp.marca));
-
-  const enlace = (extra: Record<string, string | null>) => {
-    const q = new URLSearchParams({ desde, hasta, por });
-    for (const [k, v] of Object.entries(extra)) if (v !== null) q.set(k, v);
-    return `/marcas?${q.toString()}`;
-  };
+  // El detalle de cada marca es su propia página, con el mismo período.
+  const rango = new URLSearchParams({ desde, hasta, por }).toString();
+  const cuentasActivas = ordenarCuentas(cuentas.filter((c) => c.activa)).map((c) => ({
+    id: c.id,
+    nombre: c.nombre,
+    red: c.red,
+  }));
 
   const rotuloRango = `${fechaCorta(desde)} al ${fechaCorta(hasta)}`;
   const unidad = por === "mes" ? "meses" : "semanas";
@@ -83,7 +86,6 @@ export default async function PaginaMarcas(props: PageProps<"/marcas">) {
         </div>
 
         <form method="get" className="flex flex-wrap items-end gap-3">
-          {elegida && <input type="hidden" name="marca" value={elegida.marca.id} />}
           <div className="space-y-1">
             <label className="etiqueta" htmlFor="desde">
               Desde
@@ -118,6 +120,12 @@ export default async function PaginaMarcas(props: PageProps<"/marcas">) {
         />
       ) : (
         <>
+          <FormularioPiezaManual
+            marcas={marcas.filter((m) => m.activa).map((m) => ({ id: m.id, nombre: m.nombre }))}
+            cuentas={cuentasActivas}
+            hoy={hoy}
+          />
+
           {/* Resumen */}
           <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="tarjeta p-4">
@@ -125,6 +133,7 @@ export default async function PaginaMarcas(props: PageProps<"/marcas">) {
               <p className="mt-1 text-2xl font-semibold cifra">{numero(g.conMarca)}</p>
               <p className="mt-0.5 text-xs text-[var(--color-tinta-tenue)]">
                 de {numero(g.publicaciones)} publicaciones
+                {g.manuales > 0 ? ` · ${numero(g.manuales)} a mano` : ""}
               </p>
             </div>
             <div className="tarjeta p-4">
@@ -172,6 +181,7 @@ export default async function PaginaMarcas(props: PageProps<"/marcas">) {
                   <tr>
                     <th className="th">Marca</th>
                     <th className="th text-right">Piezas</th>
+                    <th className="th text-right">A mano</th>
                     {redesConPiezas.map((r) => (
                       <th key={r} className="th text-right">
                         {r}
@@ -187,8 +197,13 @@ export default async function PaginaMarcas(props: PageProps<"/marcas">) {
                 <tbody>
                   {g.marcas.map((m) => (
                     <tr key={m.marca.id} className="border-b border-[var(--color-filete)] last:border-0">
-                      <td className="td font-medium">{m.marca.nombre}</td>
-                      <td className="td text-right cifra">{cero(m.piezas.length)}</td>
+                      <td className="td font-medium">
+                        <Link href={`/marcas/${m.marca.id}?${rango}`} className="hover:underline underline-offset-2">
+                          {m.marca.nombre}
+                        </Link>
+                      </td>
+                      <td className="td text-right cifra">{cero(m.n)}</td>
+                      <td className="td text-right cifra">{cero(m.manuales)}</td>
                       {redesConPiezas.map((r) => (
                         <td key={r} className="td text-right cifra">
                           {cero(m.porRed[r])}
@@ -201,11 +216,9 @@ export default async function PaginaMarcas(props: PageProps<"/marcas">) {
                       </td>
                       <td className="td">{m.ultima ? fechaCorta(m.ultima) : "—"}</td>
                       <td className="td text-right">
-                        {m.piezas.length > 0 && (
-                          <Link href={enlace({ marca: m.marca.id })} className="text-[13px] underline underline-offset-2">
-                            Ver detalle
-                          </Link>
-                        )}
+                        <Link href={`/marcas/${m.marca.id}?${rango}`} className="text-[13px] underline underline-offset-2">
+                          Ver detalle
+                        </Link>
                       </td>
                     </tr>
                   ))}
@@ -241,13 +254,17 @@ export default async function PaginaMarcas(props: PageProps<"/marcas">) {
                   <tbody>
                     {conPiezas.map((m) => (
                       <tr key={m.marca.id} className="border-b border-[var(--color-filete)] last:border-0">
-                        <td className="td font-medium whitespace-nowrap">{m.marca.nombre}</td>
+                        <td className="td font-medium whitespace-nowrap">
+                          <Link href={`/marcas/${m.marca.id}?${rango}`} className="hover:underline underline-offset-2">
+                            {m.marca.nombre}
+                          </Link>
+                        </td>
                         {m.porPeriodo.map((n, i) => (
                           <td key={i} className="td text-right cifra">
                             {cero(n)}
                           </td>
                         ))}
-                        <td className="td text-right cifra font-semibold">{numero(m.piezas.length)}</td>
+                        <td className="td text-right cifra font-semibold">{numero(m.n)}</td>
                       </tr>
                     ))}
                     <tr className="bg-[var(--color-realce)]/60">
@@ -264,9 +281,6 @@ export default async function PaginaMarcas(props: PageProps<"/marcas">) {
               </div>
             </section>
           )}
-
-          {/* Detalle de una marca */}
-          {elegida && <DetalleMarca m={elegida} cerrar={enlace({})} />}
 
           {/* Arrobas sin marca */}
           <section className="tarjeta p-4">
@@ -329,103 +343,5 @@ export default async function PaginaMarcas(props: PageProps<"/marcas">) {
         {marcas.length > 0 && <TablaMarcas marcas={marcas} />}
       </section>
     </div>
-  );
-}
-
-function DetalleMarca({ m, cerrar }: { m: ConteoMarca; cerrar: string }) {
-  const formatos = Object.entries(m.porFormato).sort((a, b) => b[1] - a[1]);
-  const piezas = [...m.piezas].reverse().slice(0, TOPE_PIEZAS);
-
-  return (
-    <section className="tarjeta overflow-hidden" id="detalle">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--color-filete)] px-4 py-3">
-        <div>
-          <h2 className="text-sm font-semibold tracking-tight">
-            {m.marca.nombre} · {numero(m.piezas.length)} {m.piezas.length === 1 ? "pieza" : "piezas"}
-          </h2>
-          <p className="mt-0.5 text-xs text-[var(--color-tinta-suave)]">
-            Se reconoce por: {m.marca.senales.map(rotularSenal).join(" · ")}
-          </p>
-        </div>
-        <Link href={cerrar} className="text-[13px] underline underline-offset-2">
-          Cerrar detalle
-        </Link>
-      </div>
-
-      <div className="grid gap-4 p-4 md:grid-cols-2">
-        <div>
-          <h3 className="etiqueta mb-1.5">Por cuenta</h3>
-          <table className="w-full border-collapse text-left">
-            <tbody>
-              {m.porCuenta.map((c) => (
-                <tr key={c.cuentaId} className="border-b border-[var(--color-filete)] last:border-0">
-                  <td className="td">
-                    {c.cuenta}
-                    <span className="ml-1.5 text-xs text-[var(--color-tinta-tenue)]">
-                      {c.red}
-                      {c.esInfluencer ? " · rostro" : ""}
-                    </span>
-                  </td>
-                  <td className="td text-right cifra">{numero(c.n)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div>
-          <h3 className="etiqueta mb-1.5">Por formato</h3>
-          <table className="w-full border-collapse text-left">
-            <tbody>
-              {formatos.map(([f, n]) => (
-                <tr key={f} className="border-b border-[var(--color-filete)] last:border-0">
-                  <td className="td">{f}</td>
-                  <td className="td text-right cifra">{numero(n)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="overflow-x-auto border-t border-[var(--color-filete)]">
-        <table className="w-full border-collapse text-left">
-          <thead className="border-b border-[var(--color-filete)] bg-[var(--color-realce)]/60">
-            <tr>
-              <th className="th">Fecha</th>
-              <th className="th">Cuenta</th>
-              <th className="th">Formato</th>
-              <th className="th">Publicación</th>
-              <th className="th">Reconocida por</th>
-            </tr>
-          </thead>
-          <tbody>
-            {piezas.map((p) => (
-              <tr key={p.id} className="border-b border-[var(--color-filete)] last:border-0 align-top">
-                <td className="td whitespace-nowrap">{fechaCorta(p.fecha)}</td>
-                <td className="td whitespace-nowrap">{p.cuenta}</td>
-                <td className="td">{p.categoria ?? "—"}</td>
-                <td className="td max-w-md">
-                  {p.enlace ? (
-                    <a href={p.enlace} target="_blank" rel="noreferrer" className="underline underline-offset-2">
-                      {p.titulo ?? "Ver publicación"}
-                    </a>
-                  ) : (
-                    (p.titulo ?? "—")
-                  )}
-                </td>
-                <td className="td font-mono text-[12px] text-[var(--color-tinta-suave)]">
-                  {p.por.map(rotularSenal).join(" ")}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {m.piezas.length > TOPE_PIEZAS && (
-          <p className="px-4 py-2 text-[11px] text-[var(--color-tinta-tenue)]">
-            Se muestran las {TOPE_PIEZAS} más recientes. Acota el período para ver las anteriores.
-          </p>
-        )}
-      </div>
-    </section>
   );
 }

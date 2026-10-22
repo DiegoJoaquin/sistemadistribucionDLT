@@ -9,6 +9,7 @@
  */
 
 import { z } from "zod";
+import { FORMATOS_PIEZA_MANUAL } from "@/lib/dominio/marcas";
 import { CATEGORIAS, TIPOS_INSTAGRAM } from "@/lib/dominio/categorias";
 import { normalizarHashtag } from "@/lib/dominio/hashtag";
 import {
@@ -207,6 +208,43 @@ export const esquemaCliente = z.object({
     .union([z.literal("on"), z.literal("true"), z.boolean()])
     .optional()
     .transform((v) => v === "on" || v === "true" || v === true),
+});
+
+
+/**
+ * Una pieza de marca cargada a mano: lo que el global no reconoce solo
+ * (historias, videos sin hashtag, cuentas que no están cargadas).
+ */
+export const esquemaPiezaManual = z.object({
+  marca_id: z.string({ message: "Elige la marca." }).uuid("Elige la marca."),
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Elige la fecha."),
+  cuenta_id: z
+    .string()
+    .optional()
+    .transform((v) => (v ? v : null))
+    .refine((v) => v === null || /^[0-9a-f-]{36}$/i.test(v), "La cuenta no es válida."),
+  formato: z
+    .enum(FORMATOS_PIEZA_MANUAL)
+    .optional()
+    .or(z.literal("").transform(() => undefined))
+    .transform((v) => v ?? null),
+  descripcion: z
+    .string({ message: "Describe la pieza." })
+    .trim()
+    .min(3, "Describe la pieza en unas palabras.")
+    .max(300, "La descripción es demasiado larga."),
+  enlace: z
+    .string()
+    .trim()
+    .max(2000)
+    .optional()
+    .transform((v) => v || null)
+    .refine((v) => v === null || /^https?:\/\//i.test(v), "El enlace tiene que empezar con http."),
+  cantidad: z.coerce
+    .number({ message: "La cantidad tiene que ser un número." })
+    .int("La cantidad tiene que ser un número entero.")
+    .min(1, "La cantidad mínima es 1.")
+    .max(500, "Son demasiadas para una sola carga."),
 });
 
 /** Una marca del global: nombre, notas y si se cuenta. Las señales van aparte. */
