@@ -7,6 +7,7 @@ import {
   type Espejo,
   HORAS_MINIMAS_MEDICION,
   REDES_ESPEJO,
+  sobreLoHabitual,
   UMBRAL_DISPAR,
   type VersionEspejo,
   vecesTexto,
@@ -26,7 +27,7 @@ function Celda({ v, tono }: { v: VersionEspejo | undefined; tono: "mejor" | "peo
   const color =
     v.indice === null || v.temprano
       ? "text-[var(--color-tinta-tenue)]"
-      : v.indice >= 1
+      : sobreLoHabitual(v.indice)
         ? "text-emerald-700"
         : "text-red-700";
   return (
@@ -57,6 +58,16 @@ function Celda({ v, tono }: { v: VersionEspejo | undefined; tono: "mejor" | "peo
           dato temprano
         </span>
       )}
+      {v.resubidas.map((r) => (
+        <span
+          key={r.fecha}
+          className="block text-[11px] text-[var(--color-tinta-tenue)]"
+          title="La cuenta volvió a subir este video: la resubida no cuenta para la comparación"
+        >
+          resubido el {fechaCorta(r.fecha)}
+          {r.visualizaciones === null ? "" : `: ${numero(r.visualizaciones)}`}
+        </span>
+      ))}
       {v.porDuracion && (
         <span
           className="block text-[11px] text-[var(--color-tinta-tenue)]"
@@ -172,7 +183,8 @@ export default async function PaginaEspejos(props: PageProps<"/espejos">) {
         título de los Shorts: esos se reconocen por la duración (la misma, al segundo) y la hora de subida, y
         van marcados «por duración». Las versiones medidas a menos de {HORAS_MINIMAS_MEDICION} horas de subirse
         salen como «dato temprano» y no cuentan para la comparación: vuelve a subir el export unos días después y
-        se actualizan solas.
+        se actualizan solas. Si una cuenta subió dos veces el mismo video, se compara la primera subida y la otra
+        aparece como «resubido».
       </Nota>
     </div>
   );

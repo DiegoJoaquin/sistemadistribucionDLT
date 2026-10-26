@@ -181,16 +181,63 @@ export function puntajeEspejo(p: PublicacionVideo, q: PublicacionVideo): number 
 }
 
 /**
- * Agrupa las publicaciones en espejos: a lo más una versión por red, y de a
- * pares, del más parecido al menos. Una publicación sin pareja no es espejo.
+ * Si `copia` es el mismo video que la cuenta ya había subido en `original`: la
+ * misma red y cuenta, el mismo titular y la misma duración, a pocos días. Pasa
+ * cuando se vuelve a subir un reel; la segunda subida rinde poco porque ese
+ * público ya lo vio, y compararla con otra red no dice nada del contenido.
  */
-export function agruparEspejos(pubs: readonly PublicacionVideo[]): PublicacionVideo[][] {
-  const videos = pubs.filter((p) => p.categoria !== null && (FORMATOS_VIDEO as readonly string[]).includes(p.categoria));
+export function esResubida(original: PublicacionVideo, copia: PublicacionVideo): boolean {
+  if (original.id === copia.id || original.red !== copia.red || original.cuentaId !== copia.cuentaId) return false;
+  if (diasEntre(original.fecha, copia.fecha) > DIAS_MAXIMOS) return false;
+  if (original.duracion === null || copia.duracion === null || Math.abs(original.duracion - copia.duracion) > 2) return false;
+  const { comunes, indice } = parecido(palabrasDe(original.texto), palabrasDe(copia.texto));
+  return comunes >= 2 && indice >= 0.8;
+}
+
+/** Un video de una cuenta: la primera vez que se subió y las veces que se volvió a subir. */
+export interface Subida {
+  original: PublicacionVideo;
+  resubidas: PublicacionVideo[];
+}
+
+const momento = (p: PublicacionVideo) => p.publicadoEn ?? `${p.fecha}T00:00:00`;
+
+function juntarResubidas(videos: readonly PublicacionVideo[]): Subida[] {
+  const subidas: Subida[] = [];
+  for (const p of [...videos].sort((a, b) => momento(a).localeCompare(momento(b)))) {
+    const de = subidas.find((s) => esResubida(s.original, p));
+    if (de) de.resubidas.push(p);
+    else subidas.push({ original: p, resubidas: [] });
+  }
+  return subidas;
+}
+
+/** El mejor puntaje entre dos videos contando todas sus subidas: el de otra red pudo copiar cualquiera. */
+function puntajeSubidas(a: Subida, b: Subida): number | null {
+  let mejor: number | null = null;
+  for (const p of [a.original, ...a.resubidas]) {
+    for (const q of [b.original, ...b.resubidas]) {
+      const x = puntajeEspejo(p, q);
+      if (x !== null && (mejor === null || x > mejor)) mejor = x;
+    }
+  }
+  return mejor;
+}
+
+/**
+ * Agrupa las publicaciones en espejos: a lo más un video por red, y de a pares,
+ * del más parecido al menos. Una publicación sin pareja no es espejo. Las
+ * resubidas van con su original, que es el que representa a esa red.
+ */
+export function agruparSubidas(pubs: readonly PublicacionVideo[]): Subida[][] {
+  const videos = juntarResubidas(
+    pubs.filter((p) => p.categoria !== null && (FORMATOS_VIDEO as readonly string[]).includes(p.categoria)),
+  );
 
   const pares: { a: number; b: number; puntaje: number }[] = [];
   for (let i = 0; i < videos.length; i++) {
     for (let j = i + 1; j < videos.length; j++) {
-      const puntaje = puntajeEspejo(videos[i], videos[j]);
+      const puntaje = puntajeSubidas(videos[i], videos[j]);
       if (puntaje !== null) pares.push({ a: i, b: j, puntaje });
     }
   }
@@ -202,20 +249,25 @@ export function agruparEspejos(pubs: readonly PublicacionVideo[]): PublicacionVi
     const gb = grupoDe.get(b) ?? [b];
     if (ga === gb) continue;
     // Dos versiones de la misma red en un espejo serían dos videos distintos.
-    const redes = new Set(ga.map((k) => videos[k].red));
-    if (gb.some((k) => redes.has(videos[k].red))) continue;
+    const redes = new Set(ga.map((k) => videos[k].original.red));
+    if (gb.some((k) => redes.has(videos[k].original.red))) continue;
     const unido = [...ga, ...gb];
     for (const k of unido) grupoDe.set(k, unido);
   }
 
   const vistos = new Set<number[]>();
-  const grupos: PublicacionVideo[][] = [];
+  const grupos: Subida[][] = [];
   for (const g of grupoDe.values()) {
     if (vistos.has(g) || g.length < 2) continue;
     vistos.add(g);
     grupos.push(g.map((k) => videos[k]));
   }
   return grupos;
+}
+
+/** Los espejos como publicaciones: el original de cada red. */
+export function agruparEspejos(pubs: readonly PublicacionVideo[]): PublicacionVideo[][] {
+  return agruparSubidas(pubs).map((g) => g.map((s) => s.original));
 }
 
 /* ------------------------------------------------------------------ */
@@ -305,6 +357,8 @@ export interface VersionEspejo {
   porDuracion: boolean;
   /** Se midió muy poco después de subirse: no entra en la comparación entre redes. */
   temprano: boolean;
+  /** Las veces que la cuenta volvió a subir este video; no cuentan en la comparación. */
+  resubidas: { fecha: string; visualizaciones: number | null }[];
 }
 
 export interface Espejo {
@@ -340,11 +394,13 @@ export function espejosDeLaSemana(
 ): Espejo[] {
   const espejos: Espejo[] = [];
 
-  for (const grupo of agruparEspejos(pubs)) {
-    if (!grupo.some((p) => p.fecha >= desde && p.fecha <= hasta)) continue;
+  for (const subidas of agruparSubidas(pubs)) {
+    const todas = subidas.flatMap((s) => [s.original, ...s.resubidas]);
+    if (!todas.some((p) => p.fecha >= desde && p.fecha <= hasta)) continue;
+    const grupo = subidas.map((s) => s.original);
 
-    const versiones: VersionEspejo[] = grupo
-      .map((p) => {
+    const versiones: VersionEspejo[] = subidas
+      .map(({ original: p, resubidas }) => {
         const h = habitualDe(habitual, p);
         return {
           id: p.id,
@@ -357,6 +413,7 @@ export function espejosDeLaSemana(
           enlace: p.enlace,
           porDuracion: palabrasDe(p.texto).size < 2,
           temprano: esTemprano(p),
+          resubidas: resubidas.map((r) => ({ fecha: r.fecha, visualizaciones: r.visualizaciones })),
         };
       })
       .sort((a, b) => REDES_ESPEJO.indexOf(a.red) - REDES_ESPEJO.indexOf(b.red));
@@ -368,7 +425,11 @@ export function espejosDeLaSemana(
     if (medidas.length >= 2) {
       const alta = medidas.reduce((x, y) => (y.indice! > x.indice! ? y : x));
       const baja = medidas.reduce((x, y) => (y.indice! < x.indice! ? y : x));
-      disparidad = baja.indice! > 0 ? alta.indice! / baja.indice! : null;
+      // Con los valores redondeados, los mismos que se muestran: así la cuenta
+      // «1,8× ÷ 0,19×» da lo que dice el mensaje.
+      const a = redondearVeces(alta.indice!);
+      const b = redondearVeces(baja.indice!);
+      disparidad = b > 0 ? a / b : a > 0 ? Number.POSITIVE_INFINITY : null;
       mejor = alta.red;
       peor = baja.red;
     }
@@ -400,14 +461,35 @@ export function espejosDeLaSemana(
   );
 }
 
-/** «2,6×»: cuántas veces lo habitual, con un decimal (sin decimales desde 10). */
-export function vecesTexto(x: number): string {
-  const v =
-    x >= 10
-      ? Math.round(x).toLocaleString("es-CL")
-      : x.toLocaleString("es-CL", { maximumFractionDigits: 1, minimumFractionDigits: 1 });
-  return `${v}×`;
+/**
+ * Las veces lo habitual con la precisión con que se muestran: sin decimales
+ * desde 10, uno entre 1 y 10, dos bajo 1 y dos cifras significativas bajo 0,1.
+ * Bajo 1 un solo decimal no alcanza: 0,15 y 0,24 saldrían iguales y «0,0×» no
+ * dice nada.
+ */
+export function redondearVeces(x: number): number {
+  if (x >= 9.95) return Math.round(x);
+  if (x >= 0.995) return Math.round(x * 10) / 10;
+  if (x >= 0.1) return Math.round(x * 100) / 100;
+  return x > 0 ? Number(x.toPrecision(2)) : 0;
 }
+
+/** «2,6×», «0,93×», «14×». */
+export function vecesTexto(x: number): string {
+  const r = redondearVeces(x);
+  const formato: Intl.NumberFormatOptions =
+    r >= 10
+      ? { maximumFractionDigits: 0 }
+      : r >= 1
+        ? { minimumFractionDigits: 1, maximumFractionDigits: 1 }
+        : r >= 0.1
+          ? { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+          : { maximumSignificantDigits: 2 };
+  return `${r.toLocaleString("es-CL", formato)}×`;
+}
+
+/** Sobre o bajo lo habitual, según el número que se muestra: «1,0×» no puede salir en rojo. */
+export const sobreLoHabitual = (indice: number) => redondearVeces(indice) >= 1;
 
 /** Más allá de 10, el número exacto no agrega nada y distrae: «más de 10 veces». */
 export const TOPE_VECES = 10;
@@ -419,5 +501,9 @@ export function diferenciaTexto(e: Espejo): string | null {
     e.disparidad > TOPE_VECES
       ? `más de ${TOPE_VECES} veces`
       : `${e.disparidad.toLocaleString("es-CL", { maximumFractionDigits: 1, minimumFractionDigits: 1 })} veces`;
-  return `${e.mejor} rinde ${cuanto} lo que ${e.peor}`;
+  const medidas = e.versiones.filter((v) => v.indice !== null && !v.temprano);
+  const ningunaLlego = medidas.length > 0 && medidas.every((v) => !sobreLoHabitual(v.indice!));
+  return `${e.mejor} rinde ${cuanto} lo que ${e.peor}${
+    ningunaLlego ? `, aunque ${medidas.length > 2 ? "ninguna" : "ninguna de las dos"} llegó a su habitual` : ""
+  }`;
 }

@@ -3,6 +3,7 @@ import {
   agruparEspejos,
   claveHabitual,
   diferenciaTexto,
+  esResubida,
   esTemprano,
   espejosDeLaSemana,
   type Habitual,
@@ -11,6 +12,8 @@ import {
   parecido,
   type PublicacionVideo,
   puntajeEspejo,
+  redondearVeces,
+  sobreLoHabitual,
   titularDe,
   vecesTexto,
 } from "./espejos";
@@ -129,7 +132,8 @@ describe("espejosDeLaSemana", () => {
     expect(e.versiones[1].indice).toBeCloseTo(0.47, 2);
     expect(e.mejor).toBe("Instagram");
     expect(e.peor).toBe("TikTok");
-    expect(e.disparidad).toBeCloseTo(3.54, 1);
+    // Con lo que se muestra: 1,7× ÷ 0,47×.
+    expect(e.disparidad).toBeCloseTo(1.7 / 0.47, 5);
     expect(e.dispar).toBe(true);
     expect(e.titulo).toContain("AZUL AZUL");
   });
@@ -223,8 +227,22 @@ describe("datos tempranos", () => {
 describe("cómo se dice", () => {
   it("las veces lo habitual, con un decimal y sin decimales desde 10", () => {
     expect(vecesTexto(2.642)).toBe("2,6×");
-    expect(vecesTexto(0.024)).toBe("0,0×");
     expect(vecesTexto(14.23)).toBe("14×");
+    expect(vecesTexto(9.97)).toBe("10×");
+  });
+
+  it("bajo 1, dos decimales; bajo 0,1, dos cifras: nunca «0,0×»", () => {
+    expect(vecesTexto(0.934)).toBe("0,93×");
+    expect(vecesTexto(0.152)).toBe("0,15×");
+    expect(vecesTexto(0.0257)).toBe("0,026×");
+    expect(vecesTexto(0.998)).toBe("1,0×");
+  });
+
+  it("el color sigue al número que se ve: «1,0×» está en lo habitual y «0,97×», bajo", () => {
+    expect(sobreLoHabitual(0.997)).toBe(true);
+    expect(sobreLoHabitual(0.97)).toBe(false);
+    expect(sobreLoHabitual(0.994)).toBe(false);
+    expect(redondearVeces(0.994)).toBe(0.99);
   });
 
   it("la diferencia entre redes se topa en «más de 10 veces»", () => {
@@ -232,5 +250,57 @@ describe("cómo se dice", () => {
     expect(diferenciaTexto({ ...base, disparidad: 109.9 })).toBe("YouTube rinde más de 10 veces lo que Instagram");
     expect(diferenciaTexto({ ...base, disparidad: 3.54 })).toBe("YouTube rinde 3,5 veces lo que Instagram");
     expect(diferenciaTexto({ ...base, disparidad: null })).toBeNull();
+  });
+
+  it("la diferencia se calcula con los números que se muestran", () => {
+    const habitual = new Map<string, Habitual>([
+      ["ig", { mediana: 20_000, videos: 30 }],
+      ["tt", { mediana: 9_100, videos: 30 }],
+    ]);
+    // 3.939 / 20.000 = 0,197 → «0,20×»; 16.398 / 9.100 = 1,80 → «1,8×»; 1,8 ÷ 0,20 = 9.
+    const [e] = espejosDeLaSemana([{ ...IG, visualizaciones: 3_939 }, { ...TT, visualizaciones: 16_398 }], habitual, "2026-10-19", "2026-10-25");
+    expect(diferenciaTexto(e)).toBe("TikTok rinde 9,0 veces lo que Instagram");
+  });
+
+  it("si ninguna llegó a su habitual, lo dice", () => {
+    const habitual = new Map<string, Habitual>([
+      ["ig", { mediana: 20_000, videos: 30 }],
+      ["tt", { mediana: 10_000, videos: 30 }],
+    ]);
+    const [e] = espejosDeLaSemana([{ ...IG, visualizaciones: 12_000 }, { ...TT, visualizaciones: 1_500 }], habitual, "2026-10-19", "2026-10-25");
+    expect(diferenciaTexto(e)).toBe("Instagram rinde 4,0 veces lo que TikTok, aunque ninguna de las dos llegó a su habitual");
+  });
+});
+
+describe("resubidas", () => {
+  // El caso real: @dltsports subió el reel del karaoke el 19 y otra vez el 21.
+  const original = v({
+    id: "ig-19",
+    red: "Instagram",
+    fecha: "2026-10-19",
+    publicadoEn: "2026-10-19T09:57:00",
+    duracion: 99,
+    texto: "🎸 # SANTANDERROCKANDROLLxDLT | ¿ERES CAPAZ DE HACER KARAOKE MIENTRAS CORRES?👀\n\nEl sábado se realizó...",
+    visualizaciones: 31_191,
+  });
+  const resubida = { ...original, id: "ig-21", fecha: "2026-10-21", publicadoEn: "2026-10-21T07:37:00", visualizaciones: 1_285 };
+  const short = v({ id: "yt", red: "YouTube", fecha: "2026-10-21", publicadoEn: "2026-10-21T08:10:00", duracion: 99, texto: null, visualizaciones: 7_922 });
+
+  it("el mismo video, de la misma cuenta, a pocos días", () => {
+    expect(esResubida(original, resubida)).toBe(true);
+    expect(esResubida(original, { ...resubida, duracion: 40 })).toBe(false);
+    expect(esResubida(original, { ...resubida, cuentaId: "otra" })).toBe(false);
+  });
+
+  it("se compara la primera subida, aunque el otro video se haya emparejado con la resubida", () => {
+    const habitual = new Map<string, Habitual>([
+      ["ig", { mediana: 50_000, videos: 30 }],
+      ["yt", { mediana: 3_600, videos: 30 }],
+    ]);
+    const [e] = espejosDeLaSemana([original, resubida, short], habitual, "2026-10-19", "2026-10-25");
+    const ig = e.versiones.find((x) => x.red === "Instagram")!;
+    expect(ig.visualizaciones).toBe(31_191);
+    expect(ig.resubidas).toEqual([{ fecha: "2026-10-21", visualizaciones: 1_285 }]);
+    expect(e.versiones.map((x) => x.red)).toEqual(["Instagram", "YouTube"]);
   });
 });
