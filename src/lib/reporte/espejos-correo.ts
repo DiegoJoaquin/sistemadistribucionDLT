@@ -2,39 +2,56 @@
  * La sección de publicaciones espejo del correo semanal.
  *
  * Una tabla con TODOS los espejos de la semana, no solo un aviso: cada fila es
- * un contenido y cada columna una red, con sus visualizaciones y cuánto se
- * alejó de lo habitual de su cuenta. Los dispares van primero y marcados.
+ * un contenido y cada columna una red, con sus visualizaciones y cuántas veces
+ * lo habitual de su cuenta rindió. Los dispares van primero y marcados.
+ *
+ * Se muestra «2,6× su habitual» y no «+164 %»: con porcentajes, un Short de
+ * YouTube que hizo catorce veces lo suyo aparecía como «+1.323 %», que no se
+ * entiende de un vistazo.
  */
 
-import { type Espejo, REDES_ESPEJO, UMBRAL_DISPAR, type VersionEspejo } from "@/lib/dominio/espejos";
+import {
+  diferenciaTexto,
+  type Espejo,
+  HORAS_MINIMAS_MEDICION,
+  REDES_ESPEJO,
+  UMBRAL_DISPAR,
+  type VersionEspejo,
+  vecesTexto,
+} from "@/lib/dominio/espejos";
 import { numero } from "@/lib/dominio/formato";
-import { esc, H2, pill, TH } from "./correo-base";
+import { esc, H2, TH } from "./correo-base";
 
 /** Tope de filas: el correo no puede pasar el límite de Gmail. */
 export const TOPE_ESPEJOS_CORREO = 15;
 
-function veces(x: number): string {
-  return x.toLocaleString("es-CL", { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+/** «2,6× su habitual», en verde si está sobre lo normal y en rojo si está bajo. */
+function veces(v: VersionEspejo): string {
+  if (v.indice === null) return `<span class="sm">sin habitual</span>`;
+  const arriba = v.indice >= 1;
+  const color = v.temprano ? "background:#f1f0ec;color:#6e6e68" : arriba ? "background:#e3f2e7;color:#166534" : "background:#fbe4e2;color:#991b1b";
+  return `<span class="p" style="${color}">${vecesTexto(v.indice)} su habitual</span>`;
 }
 
 function celda(v: VersionEspejo | undefined, destacada: "mejor" | "peor" | null): string {
   if (!v) return `<td class="c" align="center" style="color:#9a9a93">—</td>`;
   const vis = v.visualizaciones === null ? "—" : numero(v.visualizaciones);
   const enlace = v.enlace ? `<a href="${esc(v.enlace)}" style="color:#1f1f1c">${vis}</a>` : vis;
-  const comparacion = v.indice === null ? `<span class="sm">sin habitual</span>` : pill(v.indice - 1);
+  const notas = [v.temprano ? "dato temprano" : null, v.porDuracion ? "por duración" : null]
+    .filter(Boolean)
+    .map((n) => `<br><span class="sm">${n}</span>`)
+    .join("");
   const fondo = destacada === "mejor" ? "background:#eef7f0;" : destacada === "peor" ? "background:#fbefee;" : "";
-  const nota = v.porDuracion ? `<br><span class="sm">por duración</span>` : "";
   return `<td class="c" align="right" style="${fondo}white-space:nowrap"><strong class="val">${enlace}</strong><br><span class="sm">${esc(
     v.cuenta,
-  )}</span><br>${comparacion}${nota}</td>`;
+  )}</span><br>${veces(v)}${notas}</td>`;
 }
 
 function diferencia(e: Espejo): string {
-  if (e.disparidad === null) return `<span class="sm">No se puede comparar</span>`;
-  if (!e.dispar) return `<span class="sm">Parejo (${veces(e.disparidad)}×)</span>`;
-  return `<strong style="color:#9a3412">⚠ ${esc(e.mejor ?? "")} rinde ${veces(e.disparidad)} veces lo que ${esc(
-    e.peor ?? "",
-  )}</strong>`;
+  const texto = diferenciaTexto(e);
+  if (texto === null) return `<span class="sm">Todavía no se puede comparar</span>`;
+  if (!e.dispar) return `<span class="sm">Parejo</span>`;
+  return `<strong style="color:#9a3412">⚠ ${esc(texto)}</strong>`;
 }
 
 export function seccionEspejosHTML(espejos: readonly Espejo[]): string {
@@ -64,7 +81,8 @@ export function seccionEspejosHTML(espejos: readonly Espejo[]): string {
     dispares > 0
       ? ` · <strong style="color:#9a3412">${dispares} con rendimiento muy distinto</strong> entre redes (una rinde ${UMBRAL_DISPAR} veces o más lo que otra)`
       : ", todos con un rendimiento parejo"
-  }. Cada versión se compara contra lo habitual de su cuenta, porque las visualizaciones de una red no son comparables con las de otra. Las marcadas «por duración» no traían título (los Shorts de YouTube en Iconosquare) y se reconocieron por la duración y la hora de subida.</p>
+  }.</p>
+  <p style="margin:0 0 10px;font-size:12px;color:#6e6e68">Cómo leerla: «2,0× su habitual» es el doble de lo que normalmente logra esa cuenta con ese formato; «0,5×», la mitad. Se compara así porque las visualizaciones de una red no son comparables con las de otra. «Dato temprano»: se midió a menos de ${HORAS_MINIMAS_MEDICION} horas de subirse y todavía no juntó sus vistas, así que no cuenta para la comparación. «Por duración»: no traía título (los Shorts de YouTube en Iconosquare) y se reconoció por la duración y la hora de subida.</p>
   <table role="presentation" cellpadding="6" cellspacing="0" class="t" style="border:1px solid #e5e4e0;border-radius:8px;background:#fff">
     <tr>${TH("Contenido")}${REDES_ESPEJO.map((r) => TH(r, "right")).join("")}</tr>
     ${filas.join("")}
@@ -78,15 +96,17 @@ export function seccionEspejosTexto(espejos: readonly Espejo[]): string[] {
     l.push("  Esta semana no hay videos subidos a más de una red (o falta cargar alguna).");
     return l;
   }
+  l.push("  «2,0× su habitual» es el doble de lo que normalmente logra esa cuenta con ese formato.");
   for (const e of espejos.slice(0, TOPE_ESPEJOS_CORREO)) {
-    const encabezado = e.dispar
-      ? `  ⚠ ${e.titulo} — ${e.mejor} rinde ${veces(e.disparidad!)} veces lo que ${e.peor}`
-      : `  • ${e.titulo}`;
-    l.push(encabezado);
+    const texto = diferenciaTexto(e);
+    l.push(e.dispar && texto ? `  ⚠ ${e.titulo} — ${texto}` : `  • ${e.titulo}`);
     for (const v of e.versiones) {
-      const comp = v.indice === null ? "sin habitual" : `${v.indice >= 1 ? "+" : ""}${Math.round((v.indice - 1) * 100)}% vs lo habitual`;
+      const comp = v.indice === null ? "sin habitual" : `${vecesTexto(v.indice)} su habitual`;
+      const notas = [v.temprano ? "dato temprano" : null, v.porDuracion ? "por duración" : null].filter(Boolean);
       l.push(
-        `      ${v.red} (${v.cuenta}): ${numero(v.visualizaciones)} visualizaciones, ${comp}${v.porDuracion ? " (por duración)" : ""}${v.enlace ? ` · ${v.enlace}` : ""}`,
+        `      ${v.red} (${v.cuenta}): ${numero(v.visualizaciones)} visualizaciones, ${comp}${
+          notas.length > 0 ? ` (${notas.join(", ")})` : ""
+        }${v.enlace ? ` · ${v.enlace}` : ""}`,
       );
     }
   }

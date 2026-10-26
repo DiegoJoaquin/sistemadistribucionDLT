@@ -7,9 +7,9 @@ const DISPAR: Espejo = {
   titulo: "¿QUÉ CHU*** PASÓ EN AZUL AZUL?",
   fecha: "2026-10-19",
   versiones: [
-    { id: "a", red: "Instagram", cuenta: "Instagram DLT", fecha: "2026-10-19", visualizaciones: 133_300, habitual: 80_000, indice: 1.67, enlace: "https://www.instagram.com/reel/De1kJuPRfRn/", porDuracion: false },
-    { id: "b", red: "TikTok", cuenta: "DBF", fecha: "2026-10-19", visualizaciones: 23_537, habitual: 50_000, indice: 0.47, enlace: "https://www.tiktok.com/@debuenafuente.dlt/video/7699843600997371157", porDuracion: false },
-    { id: "c", red: "YouTube", cuenta: "YouTube", fecha: "2026-10-20", visualizaciones: 4_100, habitual: null, indice: null, enlace: "https://www.youtube.com/shorts/SwtRhyFCVJg", porDuracion: true },
+    { id: "a", red: "Instagram", cuenta: "Instagram DLT", fecha: "2026-10-19", visualizaciones: 133_300, habitual: 80_000, indice: 1.67, enlace: "https://www.instagram.com/reel/De1kJuPRfRn/", porDuracion: false, temprano: false },
+    { id: "b", red: "TikTok", cuenta: "DBF", fecha: "2026-10-19", visualizaciones: 23_537, habitual: 50_000, indice: 0.47, enlace: "https://www.tiktok.com/@debuenafuente.dlt/video/7699843600997371157", porDuracion: false, temprano: false },
+    { id: "c", red: "YouTube", cuenta: "YouTube", fecha: "2026-10-20", visualizaciones: 4_100, habitual: null, indice: null, enlace: "https://www.youtube.com/shorts/SwtRhyFCVJg", porDuracion: true, temprano: false },
   ],
   disparidad: 3.54,
   dispar: true,
@@ -43,6 +43,7 @@ describe("sección de espejos en el correo", () => {
     expect(html).toContain("Instagram rinde 3,5 veces lo que TikTok");
     expect(html).toContain("1 con rendimiento muy distinto");
     expect(html).toContain("Parejo");
+    expect(html).toContain("1,7× su habitual");
   });
 
   it("enlaza cada versión", () => {
@@ -67,6 +68,12 @@ describe("sección de espejos en el correo", () => {
   it("la versión de texto lleva lo mismo", () => {
     const t = seccionEspejosTexto([DISPAR]).join("\n");
     expect(t).toContain("⚠ ¿QUÉ CHU*** PASÓ EN AZUL AZUL? — Instagram rinde 3,5 veces lo que TikTok");
-    expect(t).toContain("TikTok (DBF): 23.537 visualizaciones, -53% vs lo habitual");
+    expect(t).toContain("TikTok (DBF): 23.537 visualizaciones, 0,5× su habitual");
+    expect(t).toContain("(por duración)");
+  });
+
+  it("una versión temprana lo dice", () => {
+    const temprano = { ...DISPAR, versiones: DISPAR.versiones.map((v, i) => ({ ...v, temprano: i === 0 })) };
+    expect(seccionEspejosHTML([temprano])).toContain("dato temprano");
   });
 });

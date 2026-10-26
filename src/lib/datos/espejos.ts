@@ -23,6 +23,7 @@ interface FilaVideo {
   id: string;
   fecha: string;
   publicado_en: string | null;
+  updated_at: string | null;
   cuenta_id: string;
   categoria: string | null;
   duracion_s: number | null;
@@ -43,7 +44,7 @@ export async function espejosDeSemana(desde: string, hasta: string): Promise<Esp
   for (let desdeFila = 0; ; desdeFila += TANDA) {
     const { data, error } = await supabase
       .from("registros")
-      .select("id, fecha, publicado_en, cuenta_id, categoria, duracion_s, texto, titulo_contenido, visualizaciones, enlace")
+      .select("id, fecha, publicado_en, updated_at, cuenta_id, categoria, duracion_s, texto, titulo_contenido, visualizaciones, enlace")
       .gte("fecha", inicio)
       .lte("fecha", fin)
       .in("categoria", [...FORMATOS_VIDEO])
@@ -61,6 +62,7 @@ export async function espejosDeSemana(desde: string, hasta: string): Promise<Esp
         id: r.id,
         fecha: r.fecha,
         publicadoEn: r.publicado_en ? String(r.publicado_en).replace(" ", "T") : null,
+        medidoEn: r.updated_at,
         cuentaId: cuenta.id,
         cuenta: cuenta.nombre,
         red: cuenta.red,

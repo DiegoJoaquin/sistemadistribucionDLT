@@ -2,8 +2,16 @@ import Link from "next/link";
 import { NavegacionSemana } from "@/componentes/NavegacionSemana";
 import { Nota, Vacio } from "@/componentes/ui";
 import { espejosDeSemana, SEMANAS_DE_REFERENCIA } from "@/lib/datos/espejos";
-import { type Espejo, REDES_ESPEJO, UMBRAL_DISPAR, type VersionEspejo } from "@/lib/dominio/espejos";
-import { fechaCorta, hoyISO, numero, porcentajeDelta, rotularSemana, semanaDe } from "@/lib/dominio/formato";
+import {
+  diferenciaTexto,
+  type Espejo,
+  HORAS_MINIMAS_MEDICION,
+  REDES_ESPEJO,
+  UMBRAL_DISPAR,
+  type VersionEspejo,
+  vecesTexto,
+} from "@/lib/dominio/espejos";
+import { fechaCorta, hoyISO, numero, rotularSemana, semanaDe } from "@/lib/dominio/formato";
 
 export const metadata = { title: "Espejos · KPIs DLT" };
 
@@ -12,13 +20,15 @@ function primero(v: string | string[] | undefined): string | undefined {
   return s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : undefined;
 }
 
-function veces(x: number): string {
-  return x.toLocaleString("es-CL", { maximumFractionDigits: 1, minimumFractionDigits: 1 });
-}
-
 function Celda({ v, tono }: { v: VersionEspejo | undefined; tono: "mejor" | "peor" | null }) {
   if (!v) return <td className="td text-center text-[var(--color-tinta-tenue)]">—</td>;
   const fondo = tono === "mejor" ? "bg-emerald-50" : tono === "peor" ? "bg-red-50" : "";
+  const color =
+    v.indice === null || v.temprano
+      ? "text-[var(--color-tinta-tenue)]"
+      : v.indice >= 1
+        ? "text-emerald-700"
+        : "text-red-700";
   return (
     <td className={`td text-right align-top ${fondo}`}>
       {v.enlace ? (
@@ -30,13 +40,23 @@ function Celda({ v, tono }: { v: VersionEspejo | undefined; tono: "mejor" | "peo
       )}
       <span className="block text-[11px] text-[var(--color-tinta-tenue)]">{v.cuenta}</span>
       <span
-        className={`block text-[12px] cifra ${
-          v.indice === null ? "text-[var(--color-tinta-tenue)]" : v.indice >= 1 ? "text-emerald-700" : "text-red-700"
-        }`}
-        title={v.habitual === null ? "La cuenta no tiene suficientes videos para saber lo habitual" : `Lo habitual de la cuenta: ${numero(v.habitual)} visualizaciones`}
+        className={`block text-[12px] cifra ${color}`}
+        title={
+          v.habitual === null
+            ? "La cuenta no tiene suficientes videos de este formato para saber lo habitual"
+            : `Lo habitual de la cuenta en este formato: ${numero(v.habitual)} visualizaciones`
+        }
       >
-        {v.indice === null ? "sin habitual" : `${porcentajeDelta(v.indice - 1)} vs habitual`}
+        {v.indice === null ? "sin habitual" : `${vecesTexto(v.indice)} su habitual`}
       </span>
+      {v.temprano && (
+        <span
+          className="block text-[11px] text-amber-700"
+          title={`Se midió a menos de ${HORAS_MINIMAS_MEDICION} horas de subirse: no cuenta para la comparación hasta que se vuelva a subir el export`}
+        >
+          dato temprano
+        </span>
+      )}
       {v.porDuracion && (
         <span
           className="block text-[11px] text-[var(--color-tinta-tenue)]"
@@ -52,20 +72,19 @@ function Celda({ v, tono }: { v: VersionEspejo | undefined; tono: "mejor" | "peo
 function Fila({ e }: { e: Espejo }) {
   const porRed = new Map(e.versiones.map((v) => [v.red, v]));
   const tono = (red: string) => (e.dispar ? (red === e.mejor ? "mejor" : red === e.peor ? "peor" : null) : null);
+  const diferencia = diferenciaTexto(e);
   return (
     <tr className={`border-b border-[var(--color-filete)] last:border-0 ${e.dispar ? "border-l-4 border-l-orange-600" : ""}`}>
       <td className="td max-w-sm whitespace-normal align-top">
         <span className="font-medium">{e.titulo}</span>
         <span className="block text-[11px] text-[var(--color-tinta-tenue)]">{fechaCorta(e.fecha)}</span>
         <span className="block text-[12px]">
-          {e.disparidad === null ? (
-            <span className="text-[var(--color-tinta-tenue)]">No se puede comparar</span>
+          {diferencia === null ? (
+            <span className="text-[var(--color-tinta-tenue)]">Todavía no se puede comparar</span>
           ) : e.dispar ? (
-            <strong className="text-orange-800">
-              ⚠ {e.mejor} rinde {veces(e.disparidad)} veces lo que {e.peor}
-            </strong>
+            <strong className="text-orange-800">⚠ {diferencia}</strong>
           ) : (
-            <span className="text-[var(--color-tinta-suave)]">Parejo ({veces(e.disparidad)}×)</span>
+            <span className="text-[var(--color-tinta-suave)]">Parejo</span>
           )}
         </span>
       </td>
@@ -147,10 +166,13 @@ export default async function PaginaEspejos(props: PageProps<"/espejos">) {
       <Nota>
         Las visualizaciones de una red no se comparan directo con las de otra: 20 mil en YouTube no son
         20 mil en Instagram. Por eso cada versión se mide contra lo habitual de SU cuenta (la mediana de sus
-        videos de las {SEMANAS_DE_REFERENCIA} semanas anteriores), y un espejo es dispar cuando una versión
+        videos de ese formato en las {SEMANAS_DE_REFERENCIA} semanas anteriores): «2,0× su habitual» es el
+        doble de lo normal para esa cuenta, y «0,5×», la mitad. Un espejo es dispar cuando una versión
         rinde {UMBRAL_DISPAR} veces o más lo que otra. El export de YouTube de Iconosquare no trae el
         título de los Shorts: esos se reconocen por la duración (la misma, al segundo) y la hora de subida, y
-        van marcados «por duración». Si subes también el export de YouTube Studio, se completan los títulos.
+        van marcados «por duración». Las versiones medidas a menos de {HORAS_MINIMAS_MEDICION} horas de subirse
+        salen como «dato temprano» y no cuentan para la comparación: vuelve a subir el export unos días después y
+        se actualizan solas.
       </Nota>
     </div>
   );

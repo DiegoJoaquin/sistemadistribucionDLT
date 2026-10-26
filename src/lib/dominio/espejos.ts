@@ -42,6 +42,11 @@ export interface PublicacionVideo {
   fecha: string;
   /** "YYYY-MM-DDTHH:mm:ss", la hora que muestra la plataforma. Null en lo cargado a mano. */
   publicadoEn: string | null;
+  /**
+   * Cuándo se tomaron sus números: la última vez que se importó (ISO con zona).
+   * Un video medido al día siguiente de subirse todavía no juntó sus vistas.
+   */
+  medidoEn: string | null;
   cuentaId: string;
   cuenta: string;
   red: Red;
@@ -217,23 +222,69 @@ export function agruparEspejos(pubs: readonly PublicacionVideo[]): PublicacionVi
 /* Rendimiento                                                         */
 /* ------------------------------------------------------------------ */
 
-/** La mediana de visualizaciones de los videos de cada cuenta. */
+/**
+ * Con menos de esto entre la subida y la medición, el video todavía no juntó sus
+ * vistas: un reel medido a las pocas horas parece un fracaso y no lo es.
+ */
+export const HORAS_MINIMAS_MEDICION = 48;
+
+/**
+ * Horas entre que se subió el video y que se tomaron sus números, o null si no
+ * se sabe. La hora de publicación es la que muestra la plataforma, en Chile
+ * (UTC−3 en la temporada en que se usa esto); la de medición trae su zona.
+ */
+export function horasMedido(p: Pick<PublicacionVideo, "publicadoEn" | "medidoEn">): number | null {
+  if (!p.publicadoEn || !p.medidoEn) return null;
+  const subida = Date.parse(`${p.publicadoEn.slice(0, 19)}-03:00`);
+  const medida = Date.parse(p.medidoEn);
+  if (Number.isNaN(subida) || Number.isNaN(medida)) return null;
+  return (medida - subida) / 36e5;
+}
+
+export function esTemprano(p: Pick<PublicacionVideo, "publicadoEn" | "medidoEn">): boolean {
+  const h = horasMedido(p);
+  return h !== null && h < HORAS_MINIMAS_MEDICION;
+}
+
+function mediana(vs: readonly number[]): number {
+  const o = [...vs].sort((a, b) => a - b);
+  return o.length % 2 ? o[(o.length - 1) / 2] : (o[o.length / 2 - 1] + o[o.length / 2]) / 2;
+}
+
+/** Clave de lo habitual de una cuenta en un formato: los Shorts con los Shorts. */
+export const claveHabitual = (cuentaId: string, categoria: string | null) => `${cuentaId}|${categoria ?? ""}`;
+
+/**
+ * Lo habitual de cada cuenta: la mediana de visualizaciones de sus videos, por
+ * cuenta y también por cuenta y formato. Los medidos demasiado pronto no
+ * cuentan: bajarían lo habitual y todo lo demás parecería un éxito.
+ */
 export function habitualPorCuenta(pubs: readonly PublicacionVideo[]): Map<string, Habitual> {
-  const porCuenta = new Map<string, number[]>();
+  const grupos = new Map<string, number[]>();
+  const sumar = (clave: string, v: number) => {
+    const lista = grupos.get(clave) ?? [];
+    lista.push(v);
+    grupos.set(clave, lista);
+  };
   for (const p of pubs) {
     if (p.visualizaciones === null || p.categoria === null) continue;
     if (!(FORMATOS_VIDEO as readonly string[]).includes(p.categoria)) continue;
-    const lista = porCuenta.get(p.cuentaId) ?? [];
-    lista.push(p.visualizaciones);
-    porCuenta.set(p.cuentaId, lista);
+    if (esTemprano(p)) continue;
+    sumar(p.cuentaId, p.visualizaciones);
+    sumar(claveHabitual(p.cuentaId, p.categoria), p.visualizaciones);
   }
   const salida = new Map<string, Habitual>();
-  for (const [cuentaId, vs] of porCuenta) {
-    const o = [...vs].sort((a, b) => a - b);
-    const m = o.length % 2 ? o[(o.length - 1) / 2] : (o[o.length / 2 - 1] + o[o.length / 2]) / 2;
-    salida.set(cuentaId, { mediana: m, videos: o.length });
-  }
+  for (const [clave, vs] of grupos) salida.set(clave, { mediana: mediana(vs), videos: vs.length });
   return salida;
+}
+
+/** Lo habitual para un video: el de su formato si hay suficientes, si no el de la cuenta. */
+function habitualDe(habitual: Map<string, Habitual>, p: PublicacionVideo): number | null {
+  for (const clave of [claveHabitual(p.cuentaId, p.categoria), p.cuentaId]) {
+    const h = habitual.get(clave);
+    if (h && h.videos >= MINIMO_HABITUAL && h.mediana > 0) return h.mediana;
+  }
+  return null;
 }
 
 /** El orden fijo de las columnas: siempre igual, para que el ojo no tenga que buscar. */
@@ -245,13 +296,15 @@ export interface VersionEspejo {
   cuenta: string;
   fecha: string;
   visualizaciones: number | null;
-  /** La mediana de la cuenta, o null si no hay suficientes videos para tenerla. */
+  /** La mediana de la cuenta en ese formato, o null si no hay suficientes videos para tenerla. */
   habitual: number | null;
-  /** Visualizaciones sobre lo habitual: 1,5 es 50 % más de lo normal. */
+  /** Veces lo habitual: 2 es el doble de lo normal de esa cuenta, 0,5 la mitad. */
   indice: number | null;
   enlace: string | null;
   /** Sin título propio: se reconoció por la duración y la hora, y conviene revisarla. */
   porDuracion: boolean;
+  /** Se midió muy poco después de subirse: no entra en la comparación entre redes. */
+  temprano: boolean;
 }
 
 export interface Espejo {
@@ -273,6 +326,10 @@ export interface Espejo {
  * Se pasan las publicaciones de unos días antes y después de la semana para no
  * perder un espejo que cruzó el lunes o el domingo; cuenta para la semana si al
  * menos una versión salió en ella.
+ *
+ * Las versiones medidas demasiado pronto se muestran, pero no entran a la
+ * comparación: hasta que se vuelva a subir el export con números maduros, ese
+ * espejo no se puede declarar dispar por esa versión.
  */
 export function espejosDeLaSemana(
   pubs: readonly PublicacionVideo[],
@@ -288,23 +345,23 @@ export function espejosDeLaSemana(
 
     const versiones: VersionEspejo[] = grupo
       .map((p) => {
-        const h = habitual.get(p.cuentaId);
-        const confiable = h && h.videos >= MINIMO_HABITUAL && h.mediana > 0 ? h.mediana : null;
+        const h = habitualDe(habitual, p);
         return {
           id: p.id,
           red: p.red,
           cuenta: p.cuenta,
           fecha: p.fecha,
           visualizaciones: p.visualizaciones,
-          habitual: confiable,
-          indice: confiable !== null && p.visualizaciones !== null ? p.visualizaciones / confiable : null,
+          habitual: h,
+          indice: h !== null && p.visualizaciones !== null ? p.visualizaciones / h : null,
           enlace: p.enlace,
           porDuracion: palabrasDe(p.texto).size < 2,
+          temprano: esTemprano(p),
         };
       })
       .sort((a, b) => REDES_ESPEJO.indexOf(a.red) - REDES_ESPEJO.indexOf(b.red));
 
-    const medidas = versiones.filter((v) => v.indice !== null);
+    const medidas = versiones.filter((v) => v.indice !== null && !v.temprano);
     let disparidad: number | null = null;
     let mejor: Red | null = null;
     let peor: Red | null = null;
@@ -341,4 +398,26 @@ export function espejosDeLaSemana(
       (b.dispar ? (b.disparidad ?? 0) - (a.disparidad ?? 0) : 0) ||
       b.fecha.localeCompare(a.fecha),
   );
+}
+
+/** «2,6×»: cuántas veces lo habitual, con un decimal (sin decimales desde 10). */
+export function vecesTexto(x: number): string {
+  const v =
+    x >= 10
+      ? Math.round(x).toLocaleString("es-CL")
+      : x.toLocaleString("es-CL", { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+  return `${v}×`;
+}
+
+/** Más allá de 10, el número exacto no agrega nada y distrae: «más de 10 veces». */
+export const TOPE_VECES = 10;
+
+/** Cómo se dice la diferencia entre la mejor y la peor versión. */
+export function diferenciaTexto(e: Espejo): string | null {
+  if (e.disparidad === null || !e.mejor || !e.peor) return null;
+  const cuanto =
+    e.disparidad > TOPE_VECES
+      ? `más de ${TOPE_VECES} veces`
+      : `${e.disparidad.toLocaleString("es-CL", { maximumFractionDigits: 1, minimumFractionDigits: 1 })} veces`;
+  return `${e.mejor} rinde ${cuanto} lo que ${e.peor}`;
 }

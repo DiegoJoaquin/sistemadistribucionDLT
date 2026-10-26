@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   agruparEspejos,
+  claveHabitual,
+  diferenciaTexto,
+  esTemprano,
   espejosDeLaSemana,
   type Habitual,
   habitualPorCuenta,
@@ -9,12 +12,14 @@ import {
   type PublicacionVideo,
   puntajeEspejo,
   titularDe,
+  vecesTexto,
 } from "./espejos";
 
 function v(p: Partial<PublicacionVideo> & Pick<PublicacionVideo, "id" | "red">): PublicacionVideo {
   return {
     fecha: "2026-10-19",
     publicadoEn: null,
+    medidoEn: null,
     cuentaId: p.red === "Instagram" ? "ig" : p.red === "TikTok" ? "tt" : "yt",
     cuenta: p.red === "Instagram" ? "Instagram DLT" : p.red === "TikTok" ? "DBF" : "YouTube",
     categoria: p.red === "Instagram" ? "Reel" : p.red === "TikTok" ? "Video" : "Short",
@@ -85,6 +90,28 @@ describe("habitualPorCuenta", () => {
   it("es la mediana de visualizaciones de los videos de cada cuenta", () => {
     const pubs = [100, 300, 200, 1_000].map((n, i) => v({ id: `h${i}`, red: "Instagram", visualizaciones: n }));
     expect(habitualPorCuenta(pubs).get("ig")).toEqual({ mediana: 250, videos: 4 });
+  });
+
+  it("también por formato: los Shorts se comparan con los Shorts", () => {
+    const pubs = [
+      ...[1_000, 2_000, 3_000].map((n, i) => v({ id: `s${i}`, red: "YouTube", categoria: "Short", visualizaciones: n })),
+      ...[20_000, 30_000].map((n, i) => v({ id: `l${i}`, red: "YouTube", categoria: "Video", visualizaciones: n })),
+    ];
+    const h = habitualPorCuenta(pubs);
+    expect(h.get(claveHabitual("yt", "Short"))).toEqual({ mediana: 2_000, videos: 3 });
+    expect(h.get("yt")?.videos).toBe(5);
+  });
+
+  it("los medidos demasiado pronto no cuentan para lo habitual", () => {
+    const fresco = v({
+      id: "f",
+      red: "Instagram",
+      visualizaciones: 10,
+      publicadoEn: "2026-10-20T10:00:00",
+      medidoEn: "2026-10-20T20:00:00Z",
+    });
+    const maduro = v({ id: "m", red: "Instagram", visualizaciones: 50_000 });
+    expect(habitualPorCuenta([fresco, maduro]).get("ig")).toEqual({ mediana: 50_000, videos: 1 });
   });
 });
 
@@ -169,5 +196,41 @@ describe("YouTube sin título", () => {
     const tt = v({ id: "tt", red: "TikTok", duracion: null });
     const [grupo] = agruparEspejos([reel, tt, sinTitulo({})]);
     expect(grupo.map((p) => p.id).sort()).toEqual(["ig", "tt", "yt"]);
+  });
+});
+
+describe("datos tempranos", () => {
+  it("un video medido a las pocas horas de subirse es temprano", () => {
+    expect(esTemprano({ publicadoEn: "2026-10-20T10:00:00", medidoEn: "2026-10-20T23:00:00Z" })).toBe(true);
+    expect(esTemprano({ publicadoEn: "2026-10-20T10:00:00", medidoEn: "2026-10-24T12:00:00Z" })).toBe(false);
+    expect(esTemprano({ publicadoEn: null, medidoEn: "2026-10-24T12:00:00Z" })).toBe(false);
+  });
+
+  it("se muestra pero no cuenta para marcar el espejo como dispar", () => {
+    const habitual = new Map<string, Habitual>([
+      ["ig", { mediana: 50_000, videos: 30 }],
+      ["tt", { mediana: 10_000, videos: 30 }],
+    ]);
+    const fresco = { ...IG, visualizaciones: 1_285, publicadoEn: "2026-10-19T10:00:00", medidoEn: "2026-10-19T20:00:00Z" };
+    const [e] = espejosDeLaSemana([fresco, { ...TT, visualizaciones: 30_000 }], habitual, "2026-10-19", "2026-10-25");
+    expect(e.versiones[0]).toMatchObject({ temprano: true });
+    expect(e.versiones[0].indice).toBeCloseTo(0.026, 3);
+    expect(e.disparidad).toBeNull();
+    expect(e.dispar).toBe(false);
+  });
+});
+
+describe("cómo se dice", () => {
+  it("las veces lo habitual, con un decimal y sin decimales desde 10", () => {
+    expect(vecesTexto(2.642)).toBe("2,6×");
+    expect(vecesTexto(0.024)).toBe("0,0×");
+    expect(vecesTexto(14.23)).toBe("14×");
+  });
+
+  it("la diferencia entre redes se topa en «más de 10 veces»", () => {
+    const base = { id: "x", titulo: "t", fecha: "2026-10-19", versiones: [], dispar: true, mejor: "YouTube" as const, peor: "Instagram" as const };
+    expect(diferenciaTexto({ ...base, disparidad: 109.9 })).toBe("YouTube rinde más de 10 veces lo que Instagram");
+    expect(diferenciaTexto({ ...base, disparidad: 3.54 })).toBe("YouTube rinde 3,5 veces lo que Instagram");
+    expect(diferenciaTexto({ ...base, disparidad: null })).toBeNull();
   });
 });
