@@ -10,6 +10,7 @@ import {
   enviosDeSemana,
   graficosDeLaSemana,
 } from "@/lib/datos/consultas";
+import { espejosDeSemana } from "@/lib/datos/espejos";
 import { hoyISO, rotularSemana, semanaDe } from "@/lib/dominio/formato";
 import {
   construirReporteSemanal,
@@ -29,13 +30,14 @@ export default async function PaginaReporte(props: PageProps<"/reporte">) {
   const sp = await props.searchParams;
   const semana = semanaDe(primero(sp.semana) ?? hoyISO());
 
-  const [catastro, envios, graficos] = await Promise.all([
+  const [catastro, envios, graficos, espejos] = await Promise.all([
     catastroDelPeriodo(semana.desde, semana.hasta),
     enviosDeSemana(semana.desde),
     graficosDeLaSemana(semana.desde),
+    espejosDeSemana(semana.desde, semana.hasta),
   ]);
 
-  const reporte = construirReporteSemanal(catastro, graficos);
+  const reporte = construirReporteSemanal(catastro, graficos, espejos);
   const html = htmlSemanal(reporte, { urlBase: urlPublica() });
   const texto = textoSemanal(reporte);
 

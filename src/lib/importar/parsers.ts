@@ -25,6 +25,7 @@ import type { Categoria } from "@/lib/dominio/categorias";
 import { clasificarSiSePuede } from "./clasificar";
 import { columnasDe, formatoDePublicacion, META } from "./columnas";
 import type { PublicacionImportada, ResultadoImport } from "./tipos";
+import { esYouTubeStudio, leerYouTubeStudio } from "./youtube-studio";
 import {
   detectarOrdenFecha,
   fechaDeCelda,
@@ -156,8 +157,7 @@ interface CabeceraXLSX {
  *   A3 Sort by / B3 ...
  *   A4 encabezados
  */
-function leerXLSXFila4(buffer: ArrayBuffer): CabeceraXLSX {
-  const libro = XLSX.read(buffer, { type: "array", cellDates: true });
+function leerXLSXFila4(libro: XLSX.WorkBook): CabeceraXLSX {
   const hoja = libro.Sheets[libro.SheetNames[0]];
   if (!hoja) throw new Error("El archivo Excel no tiene ninguna hoja.");
 
@@ -350,23 +350,24 @@ function leerYouTubeXLSX(cab: CabeceraXLSX): ResultadoImport {
   const publicaciones: PublicacionImportada[] = [];
   for (const f of cab.filas) {
     // YouTube exporta DD/MM/YYYY como texto, no como fecha de Excel.
-    const publicado_en = fechaDeCelda(f["Date and time"], "DMY");
+    const publicado_en = fechaDeCelda(campo(f, "Date and time", "Fecha y hora"), "DMY");
     if (!publicado_en) continue;
 
-    const me_gusta = num(f["Likes"]);
-    const comentarios = num(f["Comments"]);
-    const compartidos = num(f["Shares"]);
-    const caption = texto(f["Caption"]);
+    const me_gusta = num(campo(f, "Likes", "Me gusta"));
+    const comentarios = num(campo(f, "Comments", "Comentarios"));
+    const compartidos = num(campo(f, "Shares", "Compartidos"));
+    const caption = texto(campo(f, "Caption", "Leyenda"));
+    const url = texto(campo(f, "Youtube video URL", "URL del video de YouTube"));
 
     publicaciones.push({
       publicado_en,
-      formato: FORMATO_YOUTUBE[String(f["Type"] ?? "").trim().toLowerCase()] ?? null,
+      formato: FORMATO_YOUTUBE[String(campo(f, "Type", "Tipo") ?? "").trim().toLowerCase()] ?? null,
       tipo: null,
       tipo_auto: null,
       serie_hashtag: primerHashtag(caption),
       caption,
-      duracion_s: num(f["Video duration (seconds)"]),
-      visualizaciones: num(f["Views"]),
+      duracion_s: num(campo(f, "Video duration (seconds)", "Duración del video (segundos)")),
+      visualizaciones: num(campo(f, "Views", "Visualizaciones")),
       alcance: null, // §9.6: YouTube no entrega alcance
       me_gusta,
       comentarios,
@@ -375,10 +376,10 @@ function leerYouTubeXLSX(cab: CabeceraXLSX): ResultadoImport {
       favoritos: null,
       nuevos_seguidores: null,
       interacciones: sumaOpcional(me_gusta, comentarios, compartidos),
-      enlace: texto(f["Youtube video URL"]),
-      id_externo: texto(f["Youtube video URL"]),
+      enlace: url,
+      id_externo: url,
       fuente: "youtube",
-      campanas: null,
+      campanas: campanasDe(f),
     });
   }
 
@@ -407,7 +408,11 @@ export function leerArchivo(
     return leerMetaCSV(new TextDecoder("utf-8").decode(buffer));
   }
 
-  const cab = leerXLSXFila4(buffer);
+  // YouTube Studio no tiene la cabecera de Iconosquare: se reconoce por su hoja.
+  const libro = XLSX.read(buffer, { type: "array", cellDates: true });
+  if (esYouTubeStudio(libro)) return leerYouTubeStudio(libro);
+
+  const cab = leerXLSXFila4(libro);
   switch (detectarRed(cab.red)) {
     case "instagram":
       return leerInstagramXLSX(cab);

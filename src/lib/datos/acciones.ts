@@ -51,11 +51,14 @@ import {
   aFilasRegistro,
   contarHashtags,
   type FilaRegistroImportada,
+  completarTexto,
   fusionarConExistente,
   type RangoFechas,
   rangoDe,
 } from "@/lib/importar/a-registro";
 import { resolverCuenta } from "@/lib/importar/cuentas";
+import { idYouTube, variantesYouTube } from "@/lib/importar/youtube-studio";
+import { espejosDeSemana } from "./espejos";
 import { leerResultadoImport } from "@/lib/importar/esquema";
 import { cruzar } from "@/lib/importar/cruzar";
 import { leerRegistroExcel } from "@/lib/importar/registro-excel";
@@ -653,16 +656,24 @@ export async function importarPublicaciones(
    * Instagram tiene dos identificadores distintos y son dos filas, que es
    * justamente lo que el catastro tiene que mostrar por separado.
    */
+  /*
+   * En YouTube el mismo video puede estar guardado como /shorts/ID o como
+   * watch?v=ID según de dónde vino (Iconosquare distingue, YouTube Studio no).
+   * Se busca por las dos formas y se compara por el ID del video.
+   */
+  const esYouTube = cuenta.red === "YouTube";
+  const clave = (idExterno: string) => (esYouTube ? (idYouTube(idExterno) ?? idExterno) : idExterno);
   const ids = conversion.filas
     .map((f) => f.id_externo)
-    .filter((v): v is string => v !== null);
+    .filter((v): v is string => v !== null)
+    .flatMap((v) => (esYouTube ? variantesYouTube(v) : [v]));
 
   const yaEstan = new Map<string, { id: string } & Partial<FilaRegistroImportada>>();
   for (let i = 0; i < ids.length; i += 200) {
     const { data, error } = await supabase
       .from("registros")
       .select(
-        "id, id_externo, categoria, tipo, hashtag, alcance, visualizaciones, interacciones, me_gusta, comentarios, compartidos, guardados, favoritos, duracion_s, nuevos_seguidores, titulo_contenido, texto, campanas, enlace",
+        "id, id_externo, categoria, tipo, hashtag, alcance, visualizaciones, interacciones, me_gusta, comentarios, compartidos, guardados, favoritos, duracion_s, nuevos_seguidores, titulo_contenido, texto, campanas, enlace, publicado_en",
       )
       .eq("cuenta_id", cuenta.id)
       .in("id_externo", ids.slice(i, i + 200));
@@ -670,7 +681,7 @@ export async function importarPublicaciones(
     if (error) return { ok: false, mensaje: error.message };
     for (const fila of data ?? []) {
       const r = fila as { id: string; id_externo: string | null };
-      if (r.id_externo) yaEstan.set(r.id_externo, r as never);
+      if (r.id_externo) yaEstan.set(clave(r.id_externo), r as never);
     }
   }
 
@@ -678,8 +689,11 @@ export async function importarPublicaciones(
   const existentes: { id: string; datos: Record<string, unknown> }[] = [];
 
   for (const fila of conversion.filas) {
-    const previa = fila.id_externo ? yaEstan.get(fila.id_externo) : undefined;
-    if (previa) {
+    const previa = fila.id_externo ? yaEstan.get(clave(fila.id_externo)) : undefined;
+    if (previa && leido.soloCompletaTexto) {
+      // YouTube Studio: sus cifras son de un período, así que solo aporta el título.
+      existentes.push({ id: previa.id, datos: completarTexto(previa, fila) });
+    } else if (previa) {
       /*
        * `created_by` no va: la fila ya tiene autor y es quien la cargó la
        * primera vez. Mandarlo reasignaría la autoría del registro.
@@ -947,11 +961,12 @@ export async function enviarReporteSemanal(
     return { ok: false, mensaje: e instanceof Error ? e.message : "Sin destinatarios." };
   }
 
-  const [catastro, graficos] = await Promise.all([
+  const [catastro, graficos, espejos] = await Promise.all([
     catastroDelPeriodo(semana.desde, semana.hasta),
     graficosDeLaSemana(semana.desde),
+    espejosDeSemana(semana.desde, semana.hasta),
   ]);
-  const reporte = construirReporteSemanal(catastro, graficos);
+  const reporte = construirReporteSemanal(catastro, graficos, espejos);
 
   /*
    * Un correo vacío es peor que no mandar nada: el jefe abre un reporte que

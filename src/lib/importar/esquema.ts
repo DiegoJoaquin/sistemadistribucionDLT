@@ -124,6 +124,7 @@ export const esquemaResultadoImport = z.object({
     ),
   meses: z.array(z.string().regex(/^\d{4}-\d{2}$/)).max(240),
   advertencias: z.array(z.string().max(2_000)).max(50),
+  soloCompletaTexto: z.boolean().optional().catch(false),
 });
 
 export type ResultadoImportValidado = z.output<typeof esquemaResultadoImport>;

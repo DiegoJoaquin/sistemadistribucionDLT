@@ -62,4 +62,10 @@ export interface ResultadoImport {
   meses: string[];
   /** Campos que esta fuente no entrega y quedarán vacíos (§5.1). */
   advertencias: string[];
+  /**
+   * A las publicaciones que ya estaban cargadas solo se les completa el texto
+   * (título y caption), sin tocar sus métricas. Lo usa el export de YouTube
+   * Studio, cuyas cifras son de un período y no del total del video.
+   */
+  soloCompletaTexto?: boolean;
 }

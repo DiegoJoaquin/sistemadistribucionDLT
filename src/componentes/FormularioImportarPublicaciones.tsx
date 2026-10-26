@@ -2,23 +2,12 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { useFormStatus } from "react-dom";
-import { useActionState } from "react";
 import {
   importarPublicaciones,
   type ResultadoImportRegistro,
 } from "@/lib/datos/acciones";
 import { fechaCorta } from "@/lib/dominio/formato";
 import type { ResultadoImport } from "@/lib/importar/tipos";
-
-function Boton({ leyendo }: { leyendo: boolean }) {
-  const { pending } = useFormStatus();
-  return (
-    <button type="submit" className="boton" disabled={pending || leyendo}>
-      {pending ? "Guardando…" : leyendo ? "Leyendo archivo…" : "Cargar publicaciones"}
-    </button>
-  );
-}
 
 const NOMBRE_FUENTE: Record<string, string> = {
   meta: "Meta Business Suite",
@@ -28,17 +17,27 @@ const NOMBRE_FUENTE: Record<string, string> = {
   manual: "carga a mano",
 };
 
+/** Un archivo elegido, desde que se lee hasta que se carga. */
+interface Archivo {
+  nombre: string;
+  lectura: ResultadoImport | null;
+  payload: string | null;
+  error: string | null;
+  resultado: ResultadoImportRegistro | null;
+}
+
 /**
- * Subir la exportación y que el registro se llene solo.
+ * Subir las exportaciones y que el registro se llene solo.
  *
- * El archivo se lee ACÁ, en el navegador, y al servidor solo viajan las filas
- * extraídas. Antes se subía el archivo entero a una acción de servidor, y con
- * un export de varios meses la página se ponía en blanco: Next rechaza los
+ * Se pueden elegir varios archivos a la vez —los de cada red de la semana— y
+ * cada uno se reconoce solo: la red y la cuenta salen del propio archivo. Se
+ * cargan uno tras otro y cada uno muestra su resultado.
+ *
+ * Los archivos se leen ACÁ, en el navegador, y al servidor solo viajan las
+ * filas extraídas. Antes se subía el archivo entero a una acción de servidor, y
+ * con un export de varios meses la página se ponía en blanco: Next rechaza los
  * cuerpos de más de 1 MB antes de ejecutar la acción, así que no había forma de
  * mostrar un error.
- *
- * De paso se gana algo: como el archivo ya está leído, se puede mostrar qué
- * trae —cuenta, publicaciones, período— ANTES de escribir nada.
  */
 export function FormularioImportarPublicaciones({
   rango,
@@ -46,46 +45,71 @@ export function FormularioImportarPublicaciones({
   /** El rango que está filtrado abajo: se propone como rango a importar. */
   rango: { desde: string; hasta: string };
 }) {
-  const [estado, accion] = useActionState<ResultadoImportRegistro | null, FormData>(
-    importarPublicaciones,
-    null,
-  );
   const [abierto, setAbierto] = useState(false);
   const [limitar, setLimitar] = useState(false);
-
-  const [nombre, setNombre] = useState<string | null>(null);
   const [leyendo, setLeyendo] = useState(false);
-  const [lectura, setLectura] = useState<ResultadoImport | null>(null);
-  const [payload, setPayload] = useState<string | null>(null);
-  const [errorLectura, setErrorLectura] = useState<string | null>(null);
+  const [cargando, setCargando] = useState(false);
+  const [archivos, setArchivos] = useState<Archivo[]>([]);
 
-  const elegir = async (archivo: File | undefined) => {
-    setLectura(null);
-    setPayload(null);
-    setErrorLectura(null);
-    setNombre(archivo?.name ?? null);
-    if (!archivo) return;
+  const elegir = async (lista: FileList | null) => {
+    const elegidos = lista ? [...lista] : [];
+    setArchivos(elegidos.map((f) => ({ nombre: f.name, lectura: null, payload: null, error: null, resultado: null })));
+    if (elegidos.length === 0) return;
 
     setLeyendo(true);
     try {
       // Import dinámico: el megabyte de `xlsx` solo se carga si hay archivo.
       const { aPayload, leerEnNavegador } = await import("@/lib/importar/en-navegador");
-      const r = await leerEnNavegador(archivo);
-      if (!r.ok) {
-        setErrorLectura(r.mensaje);
-        return;
+      const leidos: Archivo[] = [];
+      for (const f of elegidos) {
+        const r = await leerEnNavegador(f);
+        if (!r.ok) {
+          leidos.push({ nombre: f.name, lectura: null, payload: null, error: r.mensaje, resultado: null });
+          continue;
+        }
+        const p = aPayload(r.resultado);
+        leidos.push({
+          nombre: f.name,
+          lectura: r.resultado,
+          payload: p.ok ? p.datos : null,
+          error: p.ok ? null : p.mensaje,
+          resultado: null,
+        });
       }
-      const p = aPayload(r.resultado);
-      if (!p.ok) {
-        setErrorLectura(p.mensaje);
-        return;
-      }
-      setLectura(r.resultado);
-      setPayload(p.datos);
+      setArchivos(leidos);
     } finally {
       setLeyendo(false);
     }
   };
+
+  const cargar = async (form: HTMLFormElement) => {
+    setCargando(true);
+    try {
+      const desde = (form.elements.namedItem("desde") as HTMLInputElement | null)?.value ?? "";
+      const hasta = (form.elements.namedItem("hasta") as HTMLInputElement | null)?.value ?? "";
+      for (let i = 0; i < archivos.length; i++) {
+        const a = archivos[i];
+        if (!a.payload || a.resultado?.ok) continue;
+        const fd = new FormData();
+        fd.set("datos", a.payload);
+        if (limitar) {
+          fd.set("desde", desde);
+          fd.set("hasta", hasta);
+        }
+        let resultado: ResultadoImportRegistro;
+        try {
+          resultado = await importarPublicaciones(null, fd);
+        } catch (e) {
+          resultado = { ok: false, mensaje: e instanceof Error ? e.message : "No se pudo cargar." };
+        }
+        setArchivos((previos) => previos.map((x, k) => (k === i ? { ...x, resultado } : x)));
+      }
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  const listos = archivos.filter((a) => a.payload && !a.resultado?.ok).length;
 
   return (
     <div className="tarjeta p-4">
@@ -98,8 +122,8 @@ export function FormularioImportarPublicaciones({
         <span>
           <span className="text-sm font-semibold">Cargar desde una exportación</span>
           <span className="mt-0.5 block text-xs text-[var(--color-tinta-tenue)]">
-            Sube el archivo de Meta, Iconosquare, TikTok o YouTube y las filas se
-            crean solas, una por publicación
+            Sube los archivos de Meta, Iconosquare, TikTok, YouTube o YouTube Studio —varios a la vez— y
+            las filas se crean solas, una por publicación
           </span>
         </span>
         <span className="shrink-0 text-xs text-[var(--color-tinta-tenue)]">
@@ -109,74 +133,57 @@ export function FormularioImportarPublicaciones({
 
       {abierto && (
         <form
-          action={(fd) => {
-            if (payload) fd.set("datos", payload);
-            return accion(fd);
+          onSubmit={(e) => {
+            e.preventDefault();
+            void cargar(e.currentTarget);
           }}
           className="mt-3 border-t border-[var(--color-filete)] pt-3"
         >
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
             <div className="space-y-1">
               <label className="etiqueta" htmlFor="imp-archivo">
-                Archivo (.csv de Meta o .xlsx de Iconosquare, TikTok o YouTube)
+                Archivos (.csv de Meta o .xlsx de Iconosquare, TikTok, YouTube o YouTube Studio)
               </label>
               <input
                 id="imp-archivo"
                 type="file"
                 accept=".csv,.xlsx"
+                multiple
                 required
-                onChange={(e) => void elegir(e.target.files?.[0])}
+                onChange={(e) => void elegir(e.target.files)}
                 className="campo file:mr-3 file:rounded file:border-0 file:bg-[var(--color-realce)] file:px-2 file:py-1 file:text-sm"
               />
-              {nombre && (
-                <p className="truncate text-[11px] text-[var(--color-tinta-tenue)]">
-                  {nombre}
-                </p>
-              )}
             </div>
-            <Boton leyendo={leyendo} />
+            <button type="submit" className="boton" disabled={cargando || leyendo || listos === 0}>
+              {cargando
+                ? "Cargando…"
+                : leyendo
+                  ? "Leyendo archivos…"
+                  : listos > 1
+                    ? `Cargar ${listos} archivos`
+                    : "Cargar publicaciones"}
+            </button>
           </div>
 
           <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-tinta-tenue)]">
-            La cuenta se detecta por el <strong>@usuario</strong> que trae el
-            propio archivo, así que tiene que estar cargado en{" "}
+            Puedes elegir los archivos de todas las redes de la semana juntos: cada uno se reconoce
+            solo. La cuenta se detecta por el <strong>@usuario</strong> que trae el propio archivo,
+            así que tiene que estar cargado en{" "}
             <Link href="/cuentas" className="underline underline-offset-2">
               Cuentas
             </Link>
-            . Subir dos veces el mismo archivo no duplica nada: actualiza las
-            publicaciones que ya estaban.
+            . Subir dos veces el mismo archivo no duplica nada: actualiza las publicaciones que ya
+            estaban.
           </p>
 
-          {leyendo && (
-            <p className="mt-2 text-[13px] text-[var(--color-tinta-suave)]">
-              Leyendo el archivo…
-            </p>
-          )}
-
-          {errorLectura && (
-            <p
-              role="alert"
-              className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900"
-            >
-              {errorLectura}
-            </p>
-          )}
-
-          {/* Ya se leyó: se puede decir qué trae antes de escribir nada. */}
-          {lectura && (
-            <p className="mt-3 rounded-md border border-[var(--color-filete)] bg-[var(--color-realce)] px-3 py-2 text-[13px]">
-              <strong>{lectura.publicaciones.length}</strong>{" "}
-              {lectura.publicaciones.length === 1 ? "publicación" : "publicaciones"} de{" "}
-              <strong>@{(lectura.cuenta ?? "").replace(/^@/, "")}</strong> ·{" "}
-              {lectura.detectada.red}
-              {lectura.meses.length > 0 && (
-                <>
-                  {" "}
-                  · {lectura.meses[0]}
-                  {lectura.meses.length > 1 && ` a ${lectura.meses.at(-1)}`}
-                </>
-              )}
-            </p>
+          {archivos.length > 0 && (
+            <ul className="mt-3 space-y-2">
+              {archivos.map((a, i) => (
+                <li key={`${a.nombre}-${i}`}>
+                  <LineaArchivo a={a} />
+                </li>
+              ))}
+            </ul>
           )}
 
           <div className="mt-3">
@@ -196,60 +203,84 @@ export function FormularioImportarPublicaciones({
                   <label className="etiqueta" htmlFor="imp-desde">
                     Desde
                   </label>
-                  <input
-                    id="imp-desde"
-                    name="desde"
-                    type="date"
-                    defaultValue={rango.desde}
-                    className="campo"
-                  />
+                  <input id="imp-desde" name="desde" type="date" defaultValue={rango.desde} className="campo" />
                 </div>
                 <div className="space-y-1">
                   <label className="etiqueta" htmlFor="imp-hasta">
                     Hasta
                   </label>
-                  <input
-                    id="imp-hasta"
-                    name="hasta"
-                    type="date"
-                    defaultValue={rango.hasta}
-                    className="campo"
-                  />
+                  <input id="imp-hasta" name="hasta" type="date" defaultValue={rango.hasta} className="campo" />
                 </div>
                 <p className="text-[11px] text-[var(--color-tinta-tenue)]">
-                  Sin marcar, se importa todo lo que traiga el archivo.
+                  Sin marcar, se importa todo lo que traiga cada archivo.
                 </p>
               </div>
             )}
           </div>
-
-          {estado && <Resumen estado={estado} />}
         </form>
       )}
     </div>
   );
 }
 
-function Resumen({ estado }: { estado: ResultadoImportRegistro }) {
+/** Lo que trae un archivo antes de cargarlo y, después, qué pasó. */
+function LineaArchivo({ a }: { a: Archivo }) {
+  if (a.resultado) return <Resumen nombre={a.nombre} estado={a.resultado} />;
+  if (a.error) {
+    return (
+      <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+        <span className="font-medium">{a.nombre}:</span> {a.error}
+      </p>
+    );
+  }
+  if (!a.lectura) {
+    return <p className="text-[13px] text-[var(--color-tinta-suave)]">{a.nombre} · leyendo…</p>;
+  }
+  const l = a.lectura;
+  return (
+    <p className="rounded-md border border-[var(--color-filete)] bg-[var(--color-realce)] px-3 py-2 text-[13px]">
+      <span className="text-[var(--color-tinta-tenue)]">{a.nombre}</span>
+      <br />
+      <strong>{l.publicaciones.length}</strong> {l.publicaciones.length === 1 ? "publicación" : "publicaciones"}{" "}
+      {l.detectada.usuario ? (
+        <>
+          de <strong>@{l.detectada.usuario.replace(/^@/, "")}</strong>
+        </>
+      ) : (
+        <>de {l.cuenta ?? "la cuenta"}</>
+      )}{" "}
+      · {l.detectada.red}
+      {l.meses.length > 0 && (
+        <>
+          {" "}
+          · {l.meses[0]}
+          {l.meses.length > 1 && ` a ${l.meses.at(-1)}`}
+        </>
+      )}
+    </p>
+  );
+}
+
+function Resumen({ nombre, estado }: { nombre: string; estado: ResultadoImportRegistro }) {
   const d = estado.detalle;
 
   return (
     <div
       role="status"
-      className={`mt-3 rounded-md border px-3 py-2.5 text-sm ${
+      className={`rounded-md border px-3 py-2.5 text-sm ${
         estado.ok
           ? "border-emerald-200 bg-emerald-50 text-emerald-900"
           : "border-red-200 bg-red-50 text-red-900"
       }`}
     >
+      <p className="text-[11px] opacity-70">{nombre}</p>
       <p className="font-medium">{estado.mensaje}</p>
 
       {d && (
         <>
           <ul className="mt-1.5 space-y-0.5 text-[13px]">
             <li>
-              Cuenta: <strong>{d.cuenta}</strong> · {d.red} ·{" "}
-              {NOMBRE_FUENTE[d.fuente] ?? d.fuente}
+              Cuenta: <strong>{d.cuenta}</strong> · {d.red} · {NOMBRE_FUENTE[d.fuente] ?? d.fuente}
             </li>
             <li>
               Días cubiertos: {fechaCorta(d.desde)}
@@ -264,24 +295,20 @@ function Resumen({ estado }: { estado: ResultadoImportRegistro }) {
                 .
               </li>
             )}
-            {d.fueraDeRango > 0 && (
-              <li>{d.fueraDeRango} quedaron fuera del rango que pediste.</li>
-            )}
+            {d.fueraDeRango > 0 && <li>{d.fueraDeRango} quedaron fuera del rango que pediste.</li>}
             {d.repetidasEnArchivo > 0 && (
               <li>
-                {d.repetidasEnArchivo} venían repetidas dentro del propio archivo
-                y se contaron una sola vez.
+                {d.repetidasEnArchivo} venían repetidas dentro del propio archivo y se contaron una sola
+                vez.
               </li>
             )}
           </ul>
 
           {d.hashtags.length > 0 && (
             <div className="mt-2">
-              <p className="text-[11px] font-medium uppercase tracking-wide opacity-70">
-                Hashtags de este lote
-              </p>
+              <p className="text-[11px] font-medium uppercase tracking-wide opacity-70">Hashtags de este lote</p>
               <ul className="mt-1 flex flex-wrap gap-1.5">
-                {d.hashtags.map((h) => (
+                {d.hashtags.slice(0, 40).map((h) => (
                   <li
                     key={h.hashtag ?? "sin"}
                     className="rounded border border-current/20 bg-white/60 px-1.5 py-0.5 text-[12px]"
@@ -300,14 +327,6 @@ function Resumen({ estado }: { estado: ResultadoImportRegistro }) {
                 <li key={a}>⚠ {a}</li>
               ))}
             </ul>
-          )}
-
-          {estado.ok && (
-            <p className="mt-2 text-[12px] opacity-80">
-              Las métricas de perfil (visitas, vistas de seguidores y de no
-              seguidores) no vienen en ninguna exportación: esas siguen yendo a
-              mano.
-            </p>
           )}
         </>
       )}

@@ -18,7 +18,7 @@ export function NavegacionSemana({
   ruta,
 }: {
   semana: Semana;
-  ruta: "/catastro" | "/reporte";
+  ruta: "/catastro" | "/reporte" | "/espejos";
 }) {
   const hoy = hoyISO();
   const siguiente = semanaSiguiente(semana);

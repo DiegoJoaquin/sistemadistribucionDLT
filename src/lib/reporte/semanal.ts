@@ -43,7 +43,9 @@ import {
   porcentajeDelta,
   rotularSemana,
 } from "@/lib/dominio/formato";
+import type { Espejo } from "@/lib/dominio/espejos";
 import { tieneAlcanceRed } from "@/lib/dominio/redes";
+import { seccionEspejosHTML, seccionEspejosTexto } from "./espejos-correo";
 
 export interface ReporteSemanal {
   desde: string;
@@ -74,6 +76,11 @@ export interface ReporteSemanal {
    * depende de ellos.
    */
   graficos?: GraficosSemanales;
+  /**
+   * El mismo video subido a varias redes, con el rendimiento de cada versión.
+   * Si no se pasa, el correo sale sin esa sección.
+   */
+  espejos?: Espejo[];
 }
 
 export interface GraficosSemanales {
@@ -88,6 +95,7 @@ export interface GraficosSemanales {
 export function construirReporteSemanal(
   catastro: Catastro,
   graficos?: GraficosSemanales,
+  espejos?: Espejo[],
 ): ReporteSemanal {
   const mesBase = catastro.base?.mes.slice(0, 7) ?? null;
 
@@ -109,6 +117,7 @@ export function construirReporteSemanal(
     cuentas: catastro.bloques.length,
     hayDatos: catastro.hayAlgo,
     graficos,
+    espejos,
   };
 }
 
@@ -430,6 +439,8 @@ export function htmlSemanal(
       : ""
   }
 
+  ${r.espejos ? seccionEspejosHTML(r.espejos) : ""}
+
   ${tablaCruzadas(r.cruzadas)}
 
   ${H2("Catastro por cuenta")}
@@ -492,6 +503,11 @@ export function textoSemanal(r: ReporteSemanal): string {
 
   destacadas(r.mejores, "Lo que más subió", "Ninguna serie con línea base.");
   destacadas(r.peores, "Lo que más bajó", "Ninguna serie bajo su promedio.");
+
+  if (r.espejos) {
+    l.push(...seccionEspejosTexto(r.espejos));
+    l.push("");
+  }
 
   l.push("SERIES EN MÁS DE UNA CUENTA");
   if (r.cruzadas.length === 0) {

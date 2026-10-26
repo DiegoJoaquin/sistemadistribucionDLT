@@ -14,6 +14,7 @@ const ENLACES = [
   { href: "/perfil", texto: "Métricas de perfil" },
   { href: "/base", texto: "Línea base" },
   { href: "/reporte", texto: "Reporte semanal" },
+  { href: "/espejos", texto: "Espejos" },
   { href: "/informe", texto: "Informes" },
   { href: "/cuentas", texto: "Cuentas" },
   { href: "/clientes", texto: "Clientes" },

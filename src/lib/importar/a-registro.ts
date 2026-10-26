@@ -309,6 +309,16 @@ export function fusionarConExistente(
 
   return {
     ...nueva,
+    /*
+     * Una fuente que solo trae el día (YouTube Studio) no puede borrar la hora
+     * que ya había traído otra: sería mover la publicación a medianoche.
+     */
+    publicado_en:
+      nueva.publicado_en.endsWith("T00:00:00") &&
+      existente.publicado_en &&
+      String(existente.publicado_en).slice(0, 10) === nueva.publicado_en.slice(0, 10)
+        ? String(existente.publicado_en).slice(0, 19).replace(" ", "T")
+        : nueva.publicado_en,
     categoria: mantener(nueva.categoria, existente.categoria),
     tipo: mantener(nueva.tipo, existente.tipo),
     hashtag: mantener(nueva.hashtag, existente.hashtag),
@@ -327,6 +337,32 @@ export function fusionarConExistente(
     campanas: mantener(nueva.campanas, existente.campanas),
     enlace: mantener(nueva.enlace, existente.enlace),
   };
+}
+
+/**
+ * Lo que se escribe cuando la fuente solo aporta texto (YouTube Studio).
+ *
+ * Título y caption se completan si faltaban o si el nuevo es más largo; la
+ * duración y la serie, solo si faltaban. Las métricas no se tocan: las de Studio
+ * son de un período y pisarían las del total del video.
+ */
+export function completarTexto(
+  existente: Partial<FilaRegistroImportada>,
+  nueva: FilaRegistroImportada,
+): Partial<FilaRegistroImportada> {
+  const datos: Partial<FilaRegistroImportada> = {};
+  if (nueva.texto && (!existente.texto || nueva.texto.length > existente.texto.length)) {
+    datos.texto = nueva.texto;
+  }
+  if (
+    nueva.titulo_contenido &&
+    (!existente.titulo_contenido || nueva.titulo_contenido.length > existente.titulo_contenido.length)
+  ) {
+    datos.titulo_contenido = nueva.titulo_contenido;
+  }
+  if ((existente.duracion_s ?? null) === null && nueva.duracion_s !== null) datos.duracion_s = nueva.duracion_s;
+  if (!existente.hashtag && nueva.hashtag) datos.hashtag = nueva.hashtag;
+  return datos;
 }
 
 /** Cuántas publicaciones salieron con cada hashtag, de más a menos. */
